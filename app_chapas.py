@@ -9,7 +9,7 @@ from datetime import datetime
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="Sistema Chapas", layout="wide")
 
-# CSS BLINDADO
+# CSS BLINDADO (Laranja)
 st.markdown("""
 <style>
     #MainMenu {visibility: hidden;}
@@ -33,7 +33,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 1. BANCO DE DADOS ---
+# --- 1. BANCO DE DADOS (CHAPAS) ---
 def init_db():
     conn = sqlite3.connect('dados_chapas.db', check_same_thread=False)
     c = conn.cursor()
@@ -147,54 +147,50 @@ def formatar_br(valor):
     except: return str(valor)
 
 def regra_multiplos_300_baixo(mm):
+    """Regra 300mm para BAIXO"""
     try:
         valor = int(float(mm))
         return (valor // 300) * 300
     except: return 0
 
-# --- CARREGAMENTO COM DIAGNÓSTICO DE ERRO REAL ---
+# --- CARREGAMENTO DO ARQUIVO ---
 @st.cache_data
 def carregar_base_sap():
-    caminho_arquivo = "base_sap.xlsx"
-    
-    # 1. Verifica existência
-    if not os.path.exists(caminho_arquivo):
-        return None, "Arquivo não encontrado na pasta."
-    
-    # 2. Tenta ler e CAPTURA O ERRO se falhar
     try:
-        # Tenta engine padrão, depois openpyxl explicitamente
-        df = pd.read_excel(caminho_arquivo, engine='openpyxl')
+        if os.path.exists("base_sap.xlsx"):
+            df = pd.read_excel("base_sap.xlsx")
+        else:
+            # Tenta caminho absoluto
+            pasta_script = os.path.dirname(os.path.abspath(__file__))
+            caminho_fixo = os.path.join(pasta_script, "base_sap.xlsx")
+            if os.path.exists(caminho_fixo):
+                df = pd.read_excel(caminho_fixo)
+            else:
+                return None
         
-        # Processamento
         df.columns = df.columns.str.strip()
         df['Produto'] = pd.to_numeric(df['Produto'], errors='coerce').fillna(0).astype(int)
         if df['Peso por Metro'].dtype == 'object':
                 df['Peso por Metro'] = df['Peso por Metro'].str.replace(',', '.').astype(float)
-        return df, None # Sucesso (DataFrame, Sem Erro)
-        
-    except Exception as e:
-        return None, str(e) # Retorna o erro real (Ex: "No module named 'openpyxl'")
+        return df
+    except: 
+        return None
 
 # --- 3. CONTROLE DE ACESSO ---
 st.sidebar.title("🔐 Acesso Chapas")
 modo_acesso = st.sidebar.radio("Selecione o Perfil:", ["Operador (Chão de Fábrica)", "Administrador (Escritório)"])
 
-# Tenta carregar
-df_sap, erro_msg = carregar_base_sap()
-
-# DIAGNÓSTICO: Mostra o erro real se falhar
-if df_sap is None:
-    st.error(f"🚨 FALHA AO LER EXCEL: {erro_msg}")
-    st.info("DICA: Se o erro for 'missing optional dependency openpyxl', você precisa criar o arquivo requirements.txt no GitHub.")
+df_sap = carregar_base_sap()
 
 # ==============================================================================
-# TELA 1: OPERADOR
+# TELA 1: OPERADOR (Tablet)
 # ==============================================================================
 if modo_acesso == "Operador (Chão de Fábrica)":
     st.title("🏭 Chapas: Bipagem")
     
-    if df_sap is not None:
+    if df_sap is None:
+        st.error("🚨 O arquivo `base_sap.xlsx` não foi encontrado!")
+    else:
         if 'wizard_data' not in st.session_state: st.session_state.wizard_data = {}
         if 'wizard_step' not in st.session_state: st.session_state.wizard_step = 0
         if 'item_id' not in st.session_state: st.session_state.item_id = 0 
@@ -275,13 +271,16 @@ if modo_acesso == "Operador (Chão de Fábrica)":
                             largura_real = st.session_state.wizard_data['Largura Real (mm)']
                             tamanho_real = comp
                             
+                            # CÁLCULOS
                             largura_corte = regra_multiplos_300_baixo(largura_real)
                             tamanho_corte = regra_multiplos_300_baixo(tamanho_real)
                             
                             larg_metros = largura_corte / 1000.0
                             comp_metros = tamanho_corte / 1000.0
                             
+                            # Peso Teórico = Fator * Larg(m) * Comp(m) * Qtd
                             peso_teorico = fator_sap * larg_metros * comp_metros * qtd_f
+                            
                             sucata = peso_balanca_f - peso_teorico
                             
                             item_temp = {
@@ -337,8 +336,6 @@ if modo_acesso == "Operador (Chão de Fábrica)":
 
         st.text_input("BIPAR CÓDIGO CHAPA:", key="input_scanner", on_change=iniciar_bipagem)
         st.info("ℹ️ Sistema Chapas: Regra 300mm (Para Baixo).")
-    else:
-        st.info("Aguardando correção da base de dados...")
 
 # ==============================================================================
 # TELA 2: ADMINISTRADOR
@@ -350,6 +347,9 @@ elif modo_acesso == "Administrador (Escritório)":
 
     senha_digitada = st.sidebar.text_input("Senha Admin", type="password")
     
+    if df_sap is None:
+        st.sidebar.warning("⚠️ Base SAP não carregada.")
+
     if senha_digitada == SENHA_CORRETA:
         st.sidebar.success("Acesso Chapas Liberado")
         
@@ -366,6 +366,7 @@ elif modo_acesso == "Administrador (Escritório)":
             
             st.markdown("### Conferência")
             
+            # Tabela Editável
             df_editado = st.data_editor(
                 df_banco,
                 use_container_width=True,
@@ -392,14 +393,17 @@ elif modo_acesso == "Administrador (Escritório)":
                 st.success("Status atualizados!")
                 st.rerun()
             
+            # --- EXPORTAÇÃO COM LOTE VIRTUAL E PESO TEÓRICO (AGORA VAI!) ---
             lista_exportacao = []
 
             for index, row in df_banco.iterrows():
+                # A) Linha ORIGINAL (Peso Teórico)
                 linha_original = {
                     'Lote': row['lote'],
                     'Reserva': row['reserva'],
                     'SAP': row['cod_sap'],
                     'Descrição': row['descricao'],
+                    # AQUI ESTÁ O PESO TEÓRICO QUE FALTAVA
                     'Peso Lançamento (kg)': formatar_br(row['peso_teorico']), 
                     'Status': row['status_reserva'],
                     'Qtd': row['qtd'],
@@ -410,12 +414,14 @@ elif modo_acesso == "Administrador (Escritório)":
                 }
                 lista_exportacao.append(linha_original)
 
+                # B) Linha VIRTUAL (Peso Sucata)
                 if row['sucata'] > 0:
                     linha_virtual = {
                         'Lote': "VIRTUAL",
                         'Reserva': row['reserva'],
                         'SAP': row['cod_sap'],
                         'Descrição': f"SUCATA - {row['descricao']}",
+                        # AQUI ESTÁ A SUCATA QUE FALTAVA
                         'Peso Lançamento (kg)': formatar_br(row['sucata']), 
                         'Status': row['status_reserva'],
                         'Qtd': 1,
@@ -427,7 +433,10 @@ elif modo_acesso == "Administrador (Escritório)":
                     lista_exportacao.append(linha_virtual)
 
             df_export_final = pd.DataFrame(lista_exportacao)
+            
+            # Ordena as colunas para ficar bonito
             cols_order = ['Lote', 'Reserva', 'SAP', 'Descrição', 'Peso Lançamento (kg)', 'Status', 'Qtd', 'Largura Real', 'Largura Consid.', 'Comp. Real', 'Comp. Consid.']
+            # Filtra apenas colunas que existem no DF (segurança)
             cols_final = [c for c in cols_order if c in df_export_final.columns]
             df_export_final = df_export_final[cols_final]
                 
@@ -436,7 +445,7 @@ elif modo_acesso == "Administrador (Escritório)":
                 df_export_final.to_excel(writer, index=False)
             
             st.markdown("---")
-            st.download_button("📥 Baixar Excel Chapas", buffer.getvalue(), "Relatorio_Chapas.xlsx", type="primary")
+            st.download_button("📥 Baixar Excel Chapas (Corrigido)", buffer.getvalue(), "Relatorio_Chapas.xlsx", type="primary")
             
             if st.button("🗑️ Limpar Banco Chapas", type="secondary"):
                 limpar_banco()
