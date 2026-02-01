@@ -5,6 +5,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
 import time
 import os
+import io # <--- IMPORTANTE
 
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="Sistema Chapas", layout="wide")
@@ -127,6 +128,7 @@ def salvar_no_banco(dados):
     ws = sh.worksheet("Chapas_Producao")
     lote_oficial = obter_e_incrementar_lote(dados['Cód. SAP'])
     novo_id = int(datetime.now().timestamp() * 1000)
+    
     linha = [
         novo_id, datetime.now().strftime("%d/%m/%Y %H:%M:%S"), lote_oficial,
         dados['Reserva'], "Pendente", int(dados['Cód. SAP']), dados['Descrição'],
@@ -332,7 +334,7 @@ elif modo_acesso == "Administrador (Escritório)":
                 c1.metric("Itens", len(df_banco))
                 c2.metric("Peso Total", formatar_br(df_banco['peso_real'].sum()) + " kg")
                 c3.metric("Sucata Total", formatar_br(df_banco['sucata'].sum()) + " kg")
-                
+                st.markdown("### Conferência")
                 df_editado = st.data_editor(
                     df_banco,
                     use_container_width=True,
@@ -386,7 +388,7 @@ elif modo_acesso == "Administrador (Escritório)":
                     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                         df_export_final.to_excel(writer, index=False)
                     st.markdown("---")
-                    st.download_button("📥 Baixar Excel", buffer.getvalue(), "Relatorio_Chapas.xlsx", type="primary")
+                    st.download_button("📥 Baixar Excel Chapas", buffer.getvalue(), "Relatorio_Chapas.xlsx", type="primary")
             
             with tab2:
                 st.subheader("KPIs")
@@ -405,40 +407,52 @@ elif modo_acesso == "Administrador (Escritório)":
 
 # ================= TELA 3: SUPER ADMIN =================
 elif modo_acesso == "Super Admin":
-    st.title("🛠️ Super Admin")
+    st.title("🛠️ Super Admin (Google Cloud)")
     SENHA_MESTRA = "Workaround&97146605"
     senha_digitada = st.sidebar.text_input("Senha Mestra", type="password")
     
     if senha_digitada == SENHA_MESTRA:
-        st.success("ROOT Liberado")
+        st.sidebar.success("Acesso ROOT Liberado")
         
-        st.warning("⚠️ Apaga TODAS as linhas da planilha 'Chapas_Producao' e 'Chapas_Lotes'.")
+        st.subheader("1. Reset Geral (Perigo)")
+        st.warning("⚠️ Apaga TODAS as linhas de 'Chapas_Producao' e 'Chapas_Lotes'.")
         if st.button("💣 ZERAR PLANILHA COMPLETA", type="primary"):
-            with st.spinner("Limpando..."): limpar_banco_completo()
-            st.success("Limpo!")
+            with st.spinner("Limpando Google Sheets..."):
+                limpar_banco_completo()
+            st.success("Planilhas limpas com sucesso!")
         
         st.markdown("---")
-        st.subheader("Ajustar Lotes")
+        st.subheader("2. Ajustar Contador de Lotes")
+        
         sh = conectar_google()
         ws_lotes = sh.worksheet("Chapas_Lotes")
-        st.dataframe(pd.DataFrame(ws_lotes.get_all_records()))
+        dados_lotes = ws_lotes.get_all_records()
+        df_lotes = pd.DataFrame(dados_lotes)
+        st.dataframe(df_lotes)
+        
         c1, c2, c3 = st.columns(3)
         cod_sap_alvo = c1.number_input("Cód. SAP:", step=1, format="%d")
         novo_valor = c2.number_input("Novo Valor:", min_value=0, step=1)
-        if c3.button("Atualizar"):
+        if c3.button("Atualizar Lote"):
             ajustar_contador_lote(cod_sap_alvo, novo_valor)
             st.success("Atualizado!")
             st.rerun()
             
         st.markdown("---")
-        st.subheader("Excluir por ID")
+        st.subheader("3. Excluir Linha por ID")
+        
         df_prod = ler_banco()
         st.dataframe(df_prod)
+        
         c_del1, c_del2 = st.columns([1,2])
         id_del = c_del1.number_input("ID para excluir:", step=1, format="%d")
         if c_del2.button("🗑️ Excluir"):
             if id_del > 0:
-                with st.spinner("Deletando..."):
-                    if excluir_linha_por_id(id_del): st.success("Excluído!"); st.rerun()
-                    else: st.error("ID não encontrado.")
+                with st.spinner("Deletando da nuvem..."):
+                    sucesso = excluir_linha_por_id(id_del)
+                if sucesso: 
+                    st.success("Excluído!")
+                    st.rerun()
+                else: st.error("ID não encontrado.")
+    
     elif senha_digitada: st.error("Acesso Negado")
