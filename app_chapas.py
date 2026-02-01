@@ -3,12 +3,13 @@ import pandas as pd
 import io
 import os
 import sqlite3
+import math
 from datetime import datetime
 
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="Sistema Chapas", layout="wide")
 
-# CSS BLINDADO (Laranja para Chapas)
+# CSS BLINDADO
 st.markdown("""
 <style>
     #MainMenu {visibility: hidden;}
@@ -32,7 +33,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 1. BANCO DE DADOS (CHAPAS) ---
+# --- 1. BANCO DE DADOS ---
 def init_db():
     conn = sqlite3.connect('dados_chapas.db', check_same_thread=False)
     c = conn.cursor()
@@ -69,17 +70,14 @@ def obter_e_incrementar_lote(cod_sap, apenas_visualizar=False):
     c = conn.cursor()
     c.execute("SELECT ultimo_numero FROM sequencia_lotes WHERE cod_sap = ?", (cod_sap,))
     resultado = c.fetchone()
-    
     if resultado:
         ultimo = resultado[0]
         proximo = ultimo + 1
     else:
         ultimo = 0
         proximo = 1
-    
     prefixo = "BRASA"
     lote_formatado = f"{prefixo}{proximo:05d}"
-    
     if not apenas_visualizar:
         c.execute('''
             INSERT INTO sequencia_lotes (cod_sap, ultimo_numero) 
@@ -149,46 +147,49 @@ def formatar_br(valor):
     except: return str(valor)
 
 def regra_multiplos_300_baixo(mm):
-    """Regra 300mm para BAIXO"""
     try:
         valor = int(float(mm))
         return (valor // 300) * 300
     except: return 0
 
-# --- CARREGAMENTO IDÊNTICO AO SEU CÓDIGO FUNCIONAL ---
+# --- CARREGAMENTO COM DIAGNÓSTICO DE ERRO REAL ---
 @st.cache_data
 def carregar_base_sap():
-    # Tenta carregar exatamente como no seu outro site
-    pasta_script = os.path.dirname(os.path.abspath(__file__))
-    caminho_fixo = os.path.join(pasta_script, "base_sap.xlsx")
+    caminho_arquivo = "base_sap.xlsx"
     
-    if os.path.exists(caminho_fixo):
-        try:
-            df = pd.read_excel(caminho_fixo)
-            df.columns = df.columns.str.strip()
-            df['Produto'] = pd.to_numeric(df['Produto'], errors='coerce').fillna(0).astype(int)
-            # Lê o Fator da coluna 'Peso por Metro'
-            if df['Peso por Metro'].dtype == 'object':
-                 df['Peso por Metro'] = df['Peso por Metro'].str.replace(',', '.').astype(float)
-            return df
-        except: return None
-    return None
+    # 1. Verifica existência
+    if not os.path.exists(caminho_arquivo):
+        return None, "Arquivo não encontrado na pasta."
+    
+    # 2. Tenta ler e CAPTURA O ERRO se falhar
+    try:
+        # Tenta engine padrão, depois openpyxl explicitamente
+        df = pd.read_excel(caminho_arquivo, engine='openpyxl')
+        
+        # Processamento
+        df.columns = df.columns.str.strip()
+        df['Produto'] = pd.to_numeric(df['Produto'], errors='coerce').fillna(0).astype(int)
+        if df['Peso por Metro'].dtype == 'object':
+                df['Peso por Metro'] = df['Peso por Metro'].str.replace(',', '.').astype(float)
+        return df, None # Sucesso (DataFrame, Sem Erro)
+        
+    except Exception as e:
+        return None, str(e) # Retorna o erro real (Ex: "No module named 'openpyxl'")
 
 # --- 3. CONTROLE DE ACESSO ---
 st.sidebar.title("🔐 Acesso Chapas")
 modo_acesso = st.sidebar.radio("Selecione o Perfil:", ["Operador (Chão de Fábrica)", "Administrador (Escritório)"])
 
-df_sap = carregar_base_sap()
+# Tenta carregar
+df_sap, erro_msg = carregar_base_sap()
 
-# Se falhar, mostra o que tem na pasta para prova real (sem travar o Admin)
+# DIAGNÓSTICO: Mostra o erro real se falhar
 if df_sap is None:
-    st.error("⚠️ Base SAP não carregada.")
-    # Mostra lista de arquivos para debug se o arquivo não for achado
-    pasta_atual = os.path.dirname(os.path.abspath(__file__))
-    st.sidebar.warning(f"Arquivos na pasta do servidor:\n{os.listdir(pasta_atual)}")
+    st.error(f"🚨 FALHA AO LER EXCEL: {erro_msg}")
+    st.info("DICA: Se o erro for 'missing optional dependency openpyxl', você precisa criar o arquivo requirements.txt no GitHub.")
 
 # ==============================================================================
-# TELA 1: OPERADOR (Tablet)
+# TELA 1: OPERADOR
 # ==============================================================================
 if modo_acesso == "Operador (Chão de Fábrica)":
     st.title("🏭 Chapas: Bipagem")
@@ -205,7 +206,7 @@ if modo_acesso == "Operador (Chão de Fábrica)":
             st.info(f"🏷️ Próximo Lote: **{st.session_state.proximo_lote_visual}**")
             st.markdown("---")
             
-            # 1. RESERVA
+            # PASSO 1
             if st.session_state.wizard_step == 1:
                 with st.form("form_reserva"):
                     reserva = st.text_input("1. Nº da Reserva:", key=f"res_{st.session_state.item_id}")
@@ -218,7 +219,7 @@ if modo_acesso == "Operador (Chão de Fábrica)":
                         else:
                             st.error("⚠️ Digite a Reserva!")
 
-            # 2. QUANTIDADE
+            # PASSO 2
             elif st.session_state.wizard_step == 2:
                 with st.form("form_qtd"):
                     qtd = st.number_input("2. Quantidade (Peças):", min_value=1, step=1, value=1, key=f"qtd_{st.session_state.item_id}")
@@ -228,7 +229,7 @@ if modo_acesso == "Operador (Chão de Fábrica)":
                         st.session_state.wizard_step = 3
                         st.rerun()
 
-            # 3. PESO REAL
+            # PASSO 3
             elif st.session_state.wizard_step == 3:
                 with st.form("form_peso"):
                     peso = st.number_input("3. Peso Real Balança (kg):", min_value=0.000, step=0.001, format="%.3f", key=f"peso_{st.session_state.item_id}")
@@ -241,7 +242,7 @@ if modo_acesso == "Operador (Chão de Fábrica)":
                         else:
                             st.error("⚠️ Peso não pode ser Zero!")
 
-            # 4. LARGURA
+            # PASSO 4
             elif st.session_state.wizard_step == 4:
                 with st.form("form_largura"):
                     largura = st.number_input("4. Largura Real (mm):", min_value=0, step=1, key=f"larg_{st.session_state.item_id}")
@@ -257,7 +258,7 @@ if modo_acesso == "Operador (Chão de Fábrica)":
                         else:
                             st.error("⚠️ Largura não pode ser Zero!")
 
-            # 5. COMPRIMENTO
+            # PASSO 5
             elif st.session_state.wizard_step == 5:
                 with st.form("form_comp"):
                     comp = st.number_input("5. Comprimento Real (mm):", min_value=0, step=1, key=f"comp_{st.session_state.item_id}")
@@ -274,7 +275,6 @@ if modo_acesso == "Operador (Chão de Fábrica)":
                             largura_real = st.session_state.wizard_data['Largura Real (mm)']
                             tamanho_real = comp
                             
-                            # CÁLCULOS
                             largura_corte = regra_multiplos_300_baixo(largura_real)
                             tamanho_corte = regra_multiplos_300_baixo(tamanho_real)
                             
@@ -338,7 +338,7 @@ if modo_acesso == "Operador (Chão de Fábrica)":
         st.text_input("BIPAR CÓDIGO CHAPA:", key="input_scanner", on_change=iniciar_bipagem)
         st.info("ℹ️ Sistema Chapas: Regra 300mm (Para Baixo).")
     else:
-        st.info("Aguardando carregamento da base de dados...")
+        st.info("Aguardando correção da base de dados...")
 
 # ==============================================================================
 # TELA 2: ADMINISTRADOR
@@ -366,7 +366,6 @@ elif modo_acesso == "Administrador (Escritório)":
             
             st.markdown("### Conferência")
             
-            # Tabela Editável
             df_editado = st.data_editor(
                 df_banco,
                 use_container_width=True,
@@ -393,7 +392,6 @@ elif modo_acesso == "Administrador (Escritório)":
                 st.success("Status atualizados!")
                 st.rerun()
             
-            # --- EXPORTAÇÃO ---
             lista_exportacao = []
 
             for index, row in df_banco.iterrows():
