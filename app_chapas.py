@@ -26,18 +26,38 @@ st.markdown("""
         font-size: 1.2rem !important;
         font-weight: bold;
     }
-    .stInfo {
-        font-size: 1.2rem;
-        font-weight: bold;
-    }
 </style>
 """, unsafe_allow_html=True)
+
+# --- DIAGNÓSTICO DE ARQUIVOS (PARA RESOLVER O ERRO DO GITHUB) ---
+# Isso vai mostrar na barra lateral o que o site está "enxergando"
+st.sidebar.title("🔍 Diagnóstico do Sistema")
+pasta_atual = os.getcwd()
+arquivos_na_pasta = os.listdir(pasta_atual)
+st.sidebar.write(f"**Pasta Atual:** `{pasta_atual}`")
+st.sidebar.write("**Arquivos Encontrados:**")
+st.sidebar.write(arquivos_na_pasta)
+
+# Verifica se o arquivo existe (Ignorando maiúsculas/minúsculas para ajudar)
+nome_arquivo_alvo = "base_sap.xlsx"
+arquivo_encontrado = None
+
+for f in arquivos_na_pasta:
+    if f.lower() == nome_arquivo_alvo.lower():
+        arquivo_encontrado = f
+        break
+
+if arquivo_encontrado:
+    st.sidebar.success(f"✅ Arquivo Base OK: {arquivo_encontrado}")
+else:
+    st.sidebar.error(f"❌ ARQUIVO NÃO ENCONTRADO!")
+    st.sidebar.warning(f"O sistema procura por: `{nome_arquivo_alvo}`")
+    st.sidebar.info("Verifique na lista acima se o nome está diferente.")
 
 # --- 1. BANCO DE DADOS (CHAPAS) ---
 def init_db():
     conn = sqlite3.connect('dados_chapas.db', check_same_thread=False)
     c = conn.cursor()
-    
     c.execute('''
         CREATE TABLE IF NOT EXISTS producao (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -57,21 +77,18 @@ def init_db():
             sucata REAL
         )
     ''')
-    
     c.execute('''
         CREATE TABLE IF NOT EXISTS sequencia_lotes (
             cod_sap INTEGER PRIMARY KEY,
             ultimo_numero INTEGER
         )
     ''')
-    
     conn.commit()
     conn.close()
 
 def obter_e_incrementar_lote(cod_sap, apenas_visualizar=False):
     conn = sqlite3.connect('dados_chapas.db', check_same_thread=False)
     c = conn.cursor()
-    
     c.execute("SELECT ultimo_numero FROM sequencia_lotes WHERE cod_sap = ?", (cod_sap,))
     resultado = c.fetchone()
     
@@ -92,13 +109,11 @@ def obter_e_incrementar_lote(cod_sap, apenas_visualizar=False):
             ON CONFLICT(cod_sap) DO UPDATE SET ultimo_numero = ?
         ''', (cod_sap, proximo, proximo))
         conn.commit()
-    
     conn.close()
     return lote_formatado
 
 def salvar_no_banco(dados):
     lote_oficial = obter_e_incrementar_lote(dados['Cód. SAP'], apenas_visualizar=False)
-    
     conn = sqlite3.connect('dados_chapas.db', check_same_thread=False)
     c = conn.cursor()
     c.execute('''
@@ -156,25 +171,18 @@ def formatar_br(valor):
     except: return str(valor)
 
 def regra_multiplos_300_baixo(mm):
-    """
-    REGRA CORRIGIDA:
-    Múltiplos de 300, arredondando sempre para BAIXO.
-    Ex: 2500 -> 2400
-    Ex: 400 -> 300
-    """
+    """Regra 300mm para BAIXO (Ex: 2500 -> 2400)"""
     try:
         valor = int(float(mm))
-        # Divisão inteira por 300, multiplicada por 300
         return (valor // 300) * 300
     except: return 0
 
 @st.cache_data
-def carregar_base_sap():
-    pasta_script = os.path.dirname(os.path.abspath(__file__))
-    caminho_fixo = os.path.join(pasta_script, "base_sap.xlsx")
-    if os.path.exists(caminho_fixo):
+def carregar_base_sap(nome_arquivo):
+    if nome_arquivo is None: return None
+    if os.path.exists(nome_arquivo):
         try:
-            df = pd.read_excel(caminho_fixo)
+            df = pd.read_excel(nome_arquivo)
             df.columns = df.columns.str.strip()
             df['Produto'] = pd.to_numeric(df['Produto'], errors='coerce').fillna(0).astype(int)
             if df['Peso por Metro'].dtype == 'object':
@@ -187,168 +195,168 @@ def carregar_base_sap():
 st.sidebar.title("🔐 Acesso Chapas")
 modo_acesso = st.sidebar.radio("Selecione o Perfil:", ["Operador (Chão de Fábrica)", "Administrador (Escritório)"])
 
-df_sap = carregar_base_sap()
+# Tenta carregar usando o nome encontrado no diagnóstico
+df_sap = carregar_base_sap(arquivo_encontrado)
+
+# SE NÃO CARREGAR, MOSTRA AVISO MAS NÃO TRAVA O ADMIN
 if df_sap is None:
-    st.error("ERRO: `base_sap.xlsx` não encontrado.")
-    st.stop()
+    st.error("🚨 ERRO CRÍTICO: BASE SAP NÃO CARREGADA")
+    st.info("Veja o diagnóstico na barra lateral esquerda para corrigir o nome do arquivo no GitHub.")
+    # Não usamos st.stop() aqui para permitir que o Admin entre e veja o erro, se quiser.
 
 # ==============================================================================
 # TELA 1: OPERADOR (Tablet)
 # ==============================================================================
 if modo_acesso == "Operador (Chão de Fábrica)":
     st.title("🏭 Chapas: Bipagem")
+    
+    if df_sap is None:
+        st.warning("⚠️ Sistema Pausado: Aguardando arquivo 'base_sap.xlsx'. Contate o Administrador.")
+    else:
+        # Lógica do Operador (Só roda se tiver base)
+        if 'wizard_data' not in st.session_state: st.session_state.wizard_data = {}
+        if 'wizard_step' not in st.session_state: st.session_state.wizard_step = 0
+        if 'item_id' not in st.session_state: st.session_state.item_id = 0 
+        if 'proximo_lote_visual' not in st.session_state: st.session_state.proximo_lote_visual = ""
 
-    if 'wizard_data' not in st.session_state: st.session_state.wizard_data = {}
-    if 'wizard_step' not in st.session_state: st.session_state.wizard_step = 0
-    if 'item_id' not in st.session_state: st.session_state.item_id = 0 
-    if 'proximo_lote_visual' not in st.session_state: st.session_state.proximo_lote_visual = ""
+        @st.dialog("📦 Entrada de Chapas")
+        def wizard_item():
+            st.write(f"**Item:** {st.session_state.wizard_data.get('Cód. SAP')} - {st.session_state.wizard_data.get('Descrição')}")
+            st.info(f"🏷️ Próximo Lote: **{st.session_state.proximo_lote_visual}**")
+            st.markdown("---")
+            
+            # 1. RESERVA
+            if st.session_state.wizard_step == 1:
+                with st.form("form_reserva"):
+                    reserva = st.text_input("1. Nº da Reserva:", key=f"res_{st.session_state.item_id}")
+                    st.write("")
+                    if st.form_submit_button("PRÓXIMO >>", use_container_width=True, type="primary"):
+                        if reserva.strip():
+                            st.session_state.wizard_data['Reserva'] = reserva
+                            st.session_state.wizard_step = 2
+                            st.rerun()
+                        else:
+                            st.error("⚠️ Digite a Reserva!")
 
-    @st.dialog("📦 Entrada de Chapas")
-    def wizard_item():
-        st.write(f"**Item:** {st.session_state.wizard_data.get('Cód. SAP')} - {st.session_state.wizard_data.get('Descrição')}")
-        st.info(f"🏷️ Próximo Lote: **{st.session_state.proximo_lote_visual}**")
-        st.markdown("---")
-        
-        # 1. RESERVA
-        if st.session_state.wizard_step == 1:
-            with st.form("form_reserva"):
-                reserva = st.text_input("1. Nº da Reserva:", key=f"res_{st.session_state.item_id}")
-                st.write("")
-                if st.form_submit_button("PRÓXIMO >>", use_container_width=True, type="primary"):
-                    if reserva.strip():
-                        st.session_state.wizard_data['Reserva'] = reserva
-                        st.session_state.wizard_step = 2
+            # 2. QUANTIDADE
+            elif st.session_state.wizard_step == 2:
+                with st.form("form_qtd"):
+                    qtd = st.number_input("2. Quantidade (Peças):", min_value=1, step=1, value=1, key=f"qtd_{st.session_state.item_id}")
+                    st.write("")
+                    if st.form_submit_button("PRÓXIMO >>", use_container_width=True, type="primary"):
+                        st.session_state.wizard_data['Qtd'] = qtd
+                        st.session_state.wizard_step = 3
                         st.rerun()
-                    else:
-                        st.error("⚠️ Digite a Reserva!")
 
-        # 2. QUANTIDADE
-        elif st.session_state.wizard_step == 2:
-            with st.form("form_qtd"):
-                qtd = st.number_input("2. Quantidade (Peças):", min_value=1, step=1, value=1, key=f"qtd_{st.session_state.item_id}")
-                st.write("")
-                if st.form_submit_button("PRÓXIMO >>", use_container_width=True, type="primary"):
-                    st.session_state.wizard_data['Qtd'] = qtd
-                    st.session_state.wizard_step = 3
-                    st.rerun()
+            # 3. PESO REAL
+            elif st.session_state.wizard_step == 3:
+                with st.form("form_peso"):
+                    peso = st.number_input("3. Peso Real Balança (kg):", min_value=0.000, step=0.001, format="%.3f", key=f"peso_{st.session_state.item_id}")
+                    st.write("")
+                    if st.form_submit_button("PRÓXIMO >>", use_container_width=True, type="primary"):
+                        if peso > 0:
+                            st.session_state.wizard_data['Peso Balança (kg)'] = peso
+                            st.session_state.wizard_step = 4
+                            st.rerun()
+                        else:
+                            st.error("⚠️ Peso não pode ser Zero!")
 
-        # 3. PESO REAL
-        elif st.session_state.wizard_step == 3:
-            with st.form("form_peso"):
-                peso = st.number_input("3. Peso Real Balança (kg):", min_value=0.000, step=0.001, format="%.3f", key=f"peso_{st.session_state.item_id}")
-                st.write("")
-                if st.form_submit_button("PRÓXIMO >>", use_container_width=True, type="primary"):
-                    if peso > 0:
-                        st.session_state.wizard_data['Peso Balança (kg)'] = peso
-                        st.session_state.wizard_step = 4
-                        st.rerun()
-                    else:
-                        st.error("⚠️ Peso não pode ser Zero!")
-
-        # 4. LARGURA
-        elif st.session_state.wizard_step == 4:
-            with st.form("form_largura"):
-                largura = st.number_input("4. Largura Real (mm):", min_value=0, step=1, key=f"larg_{st.session_state.item_id}")
-                
-                # Feedback da Regra (Largura)
-                larg_multiplo = regra_multiplos_300_baixo(largura)
-                if largura > 0:
-                    st.caption(f"Regra 300mm: {largura}mm -> **{larg_multiplo}mm** (Arred. p/ Baixo)")
-
-                st.write("")
-                if st.form_submit_button("PRÓXIMO >>", use_container_width=True, type="primary"):
+            # 4. LARGURA
+            elif st.session_state.wizard_step == 4:
+                with st.form("form_largura"):
+                    largura = st.number_input("4. Largura Real (mm):", min_value=0, step=1, key=f"larg_{st.session_state.item_id}")
+                    larg_multiplo = regra_multiplos_300_baixo(largura)
                     if largura > 0:
-                        st.session_state.wizard_data['Largura Real (mm)'] = largura
-                        st.session_state.wizard_step = 5
-                        st.rerun()
-                    else:
-                        st.error("⚠️ Largura não pode ser Zero!")
+                        st.caption(f"Regra 300mm: {largura}mm -> **{larg_multiplo}mm** (Arred. p/ Baixo)")
+                    st.write("")
+                    if st.form_submit_button("PRÓXIMO >>", use_container_width=True, type="primary"):
+                        if largura > 0:
+                            st.session_state.wizard_data['Largura Real (mm)'] = largura
+                            st.session_state.wizard_step = 5
+                            st.rerun()
+                        else:
+                            st.error("⚠️ Largura não pode ser Zero!")
 
-        # 5. COMPRIMENTO
-        elif st.session_state.wizard_step == 5:
-            with st.form("form_comp"):
-                comp = st.number_input("5. Comprimento Real (mm):", min_value=0, step=1, key=f"comp_{st.session_state.item_id}")
-                
-                # Feedback da Regra (Comprimento)
-                comp_multiplo = regra_multiplos_300_baixo(comp)
-                if comp > 0:
-                    st.caption(f"Regra 300mm: {comp}mm -> **{comp_multiplo}mm** (Arred. p/ Baixo)")
-                
-                st.write("")
-                
-                if st.form_submit_button("✅ SALVAR E FINALIZAR", use_container_width=True, type="primary"):
+            # 5. COMPRIMENTO
+            elif st.session_state.wizard_step == 5:
+                with st.form("form_comp"):
+                    comp = st.number_input("5. Comprimento Real (mm):", min_value=0, step=1, key=f"comp_{st.session_state.item_id}")
+                    comp_multiplo = regra_multiplos_300_baixo(comp)
                     if comp > 0:
-                        fator_sap = st.session_state.wizard_data['Fator SAP']
-                        qtd_f = st.session_state.wizard_data['Qtd']
-                        peso_balanca_f = st.session_state.wizard_data['Peso Balança (kg)']
-                        
-                        largura_real = st.session_state.wizard_data['Largura Real (mm)']
-                        tamanho_real = comp
-                        
-                        # --- CÁLCULOS FINAIS ---
-                        largura_corte = regra_multiplos_300_baixo(largura_real)
-                        tamanho_corte = regra_multiplos_300_baixo(tamanho_real)
-                        
-                        # Divisão por 1000 (mm -> m)
-                        larg_metros = largura_corte / 1000.0
-                        comp_metros = tamanho_corte / 1000.0
-                        
-                        peso_teorico = fator_sap * larg_metros * comp_metros * qtd_f
-                        sucata = peso_balanca_f - peso_teorico
-                        
-                        item_temp = {
-                            "Reserva": st.session_state.wizard_data['Reserva'],
-                            "Cód. SAP": st.session_state.wizard_data['Cód. SAP'],
-                            "Descrição": st.session_state.wizard_data['Descrição'],
-                            "Qtd": qtd_f,
-                            "Peso Balança (kg)": peso_balanca_f,
-                            "Largura Real (mm)": largura_real,
-                            "Largura Corte (mm)": largura_corte,
-                            "Tamanho Real (mm)": tamanho_real,
-                            "Tamanho Corte (mm)": tamanho_corte,
-                            "Peso Teórico": peso_teorico,
-                            "Sucata": sucata
-                        }
-                        
-                        lote_gerado = salvar_no_banco(item_temp)
-                        st.toast(f"Chapa Salva! Lote: {lote_gerado}", icon="🏗️")
-                        
-                        st.session_state.wizard_data = {}
-                        st.session_state.wizard_step = 0
-                        st.session_state.input_scanner = ""
-                        st.rerun()
-                    else:
-                        st.error("⚠️ Comprimento não pode ser Zero!")
-
-    def iniciar_bipagem():
-        codigo = st.session_state.input_scanner
-        if codigo:
-            try:
-                cod_limpo = str(codigo).strip().split(":")[-1]
-                cod_int = int(cod_limpo)
-                produto = df_sap[df_sap['Produto'] == cod_int]
-                if not produto.empty:
-                    st.session_state.item_id += 1 
-                    prev = obter_e_incrementar_lote(cod_int, apenas_visualizar=True)
-                    st.session_state.proximo_lote_visual = prev
+                        st.caption(f"Regra 300mm: {comp}mm -> **{comp_multiplo}mm** (Arred. p/ Baixo)")
+                    st.write("")
                     
-                    st.session_state.wizard_data = {
-                        "Cód. SAP": cod_int,
-                        "Descrição": produto.iloc[0]['Descrição do produto'],
-                        "Fator SAP": produto.iloc[0]['Peso por Metro']
-                    }
-                    st.session_state.wizard_step = 1
-                else:
-                    st.toast("Material não encontrado!", icon="🚫")
+                    if st.form_submit_button("✅ SALVAR E FINALIZAR", use_container_width=True, type="primary"):
+                        if comp > 0:
+                            fator_sap = st.session_state.wizard_data['Fator SAP']
+                            qtd_f = st.session_state.wizard_data['Qtd']
+                            peso_balanca_f = st.session_state.wizard_data['Peso Balança (kg)']
+                            largura_real = st.session_state.wizard_data['Largura Real (mm)']
+                            tamanho_real = comp
+                            
+                            # CÁLCULOS
+                            largura_corte = regra_multiplos_300_baixo(largura_real)
+                            tamanho_corte = regra_multiplos_300_baixo(tamanho_real)
+                            
+                            larg_metros = largura_corte / 1000.0
+                            comp_metros = tamanho_corte / 1000.0
+                            
+                            peso_teorico = fator_sap * larg_metros * comp_metros * qtd_f
+                            sucata = peso_balanca_f - peso_teorico
+                            
+                            item_temp = {
+                                "Reserva": st.session_state.wizard_data['Reserva'],
+                                "Cód. SAP": st.session_state.wizard_data['Cód. SAP'],
+                                "Descrição": st.session_state.wizard_data['Descrição'],
+                                "Qtd": qtd_f,
+                                "Peso Balança (kg)": peso_balanca_f,
+                                "Largura Real (mm)": largura_real,
+                                "Largura Corte (mm)": largura_corte,
+                                "Tamanho Real (mm)": tamanho_real,
+                                "Tamanho Corte (mm)": tamanho_corte,
+                                "Peso Teórico": peso_teorico,
+                                "Sucata": sucata
+                            }
+                            
+                            lote_gerado = salvar_no_banco(item_temp)
+                            st.toast(f"Chapa Salva! Lote: {lote_gerado}", icon="🏗️")
+                            
+                            st.session_state.wizard_data = {}
+                            st.session_state.wizard_step = 0
+                            st.session_state.input_scanner = ""
+                            st.rerun()
+                        else:
+                            st.error("⚠️ Comprimento não pode ser Zero!")
+
+        def iniciar_bipagem():
+            codigo = st.session_state.input_scanner
+            if codigo:
+                try:
+                    cod_limpo = str(codigo).strip().split(":")[-1]
+                    cod_int = int(cod_limpo)
+                    produto = df_sap[df_sap['Produto'] == cod_int]
+                    if not produto.empty:
+                        st.session_state.item_id += 1 
+                        prev = obter_e_incrementar_lote(cod_int, apenas_visualizar=True)
+                        st.session_state.proximo_lote_visual = prev
+                        
+                        st.session_state.wizard_data = {
+                            "Cód. SAP": cod_int,
+                            "Descrição": produto.iloc[0]['Descrição do produto'],
+                            "Fator SAP": produto.iloc[0]['Peso por Metro']
+                        }
+                        st.session_state.wizard_step = 1
+                    else:
+                        st.toast("Material não encontrado!", icon="🚫")
+                        st.session_state.input_scanner = ""
+                except:
                     st.session_state.input_scanner = ""
-            except:
-                st.session_state.input_scanner = ""
 
-    if st.session_state.wizard_step > 0:
-        wizard_item()
+        if st.session_state.wizard_step > 0:
+            wizard_item()
 
-    st.text_input("BIPAR CÓDIGO CHAPA:", key="input_scanner", on_change=iniciar_bipagem)
-    st.info("ℹ️ Sistema Chapas: Regra 300mm (Para Baixo).")
+        st.text_input("BIPAR CÓDIGO CHAPA:", key="input_scanner", on_change=iniciar_bipagem)
+        st.info("ℹ️ Sistema Chapas: Regra 300mm (Para Baixo).")
 
 # ==============================================================================
 # TELA 2: ADMINISTRADOR
@@ -407,7 +415,6 @@ elif modo_acesso == "Administrador (Escritório)":
             lista_exportacao = []
 
             for index, row in df_banco.iterrows():
-                # A) LINHA ORIGINAL
                 linha_original = {
                     'Lote': row['lote'],
                     'Reserva': row['reserva'],
@@ -423,7 +430,6 @@ elif modo_acesso == "Administrador (Escritório)":
                 }
                 lista_exportacao.append(linha_original)
 
-                # B) LINHA VIRTUAL (SUCATA)
                 if row['sucata'] > 0:
                     linha_virtual = {
                         'Lote': "VIRTUAL",
@@ -441,7 +447,6 @@ elif modo_acesso == "Administrador (Escritório)":
                     lista_exportacao.append(linha_virtual)
 
             df_export_final = pd.DataFrame(lista_exportacao)
-            
             cols_order = ['Lote', 'Reserva', 'SAP', 'Descrição', 'Peso Lançamento (kg)', 'Status', 'Qtd', 'Largura Real', 'Largura Consid.', 'Comp. Real', 'Comp. Consid.']
             cols_final = [c for c in cols_order if c in df_export_final.columns]
             df_export_final = df_export_final[cols_final]
