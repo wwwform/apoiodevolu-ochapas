@@ -387,8 +387,67 @@ elif modo_acesso == "Administrador (Escritório)":
                 atualizar_status_lote(df_editado)
                 st.success("Status atualizados!")
                 st.rerun()
+            
+            # --- LÓGICA DE EXPORTAÇÃO CORRIGIDA ---
+            lista_exportacao = []
 
-            # ==============================================================================
+            for index, row in df_banco.iterrows():
+                # A) Linha ORIGINAL
+                linha_original = {
+                    'Lote': row['lote'],
+                    'Reserva': row['reserva'],
+                    'SAP': row['cod_sap'],
+                    'Descrição': row['descricao'],
+                    'Peso Lançamento (kg)': formatar_br(row['peso_teorico']), # Peso Teórico
+                    'Status': row['status_reserva'],
+                    'Qtd': row['qtd'],
+                    'Largura Real': row['largura_real_mm'],
+                    'Largura Consid.': row['largura_corte_mm'],
+                    'Comp. Real': row['tamanho_real_mm'],
+                    'Comp. Consid.': row['tamanho_corte_mm']
+                }
+                lista_exportacao.append(linha_original)
+
+                # B) Linha VIRTUAL (SUCATA)
+                # Verifica se existe sucata (maior que 0.001 para evitar sujeira de ponto flutuante)
+                if row['sucata'] > 0.001:
+                    linha_virtual = {
+                        'Lote': "VIRTUAL",
+                        'Reserva': row['reserva'],
+                        'SAP': row['cod_sap'],
+                        'Descrição': f"SUCATA - {row['descricao']}",
+                        'Peso Lançamento (kg)': formatar_br(row['sucata']), # Peso Sucata
+                        'Status': row['status_reserva'],
+                        'Qtd': 1,
+                        'Largura Real': 0,
+                        'Largura Consid.': 0,
+                        'Comp. Real': 0,
+                        'Comp. Consid.': 0
+                    }
+                    lista_exportacao.append(linha_virtual)
+
+            df_export_final = pd.DataFrame(lista_exportacao)
+            
+            cols_order = ['Lote', 'Reserva', 'SAP', 'Descrição', 'Peso Lançamento (kg)', 'Status', 'Qtd', 'Largura Real', 'Largura Consid.', 'Comp. Real', 'Comp. Consid.']
+            # Garante que só ordena colunas que existem
+            cols_final = [c for c in cols_order if c in df_export_final.columns]
+            df_export_final = df_export_final[cols_final]
+                
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                df_export_final.to_excel(writer, index=False)
+            
+            st.markdown("---")
+            st.download_button("📥 Baixar Excel Chapas", buffer.getvalue(), "Relatorio_Chapas.xlsx", type="primary")
+            
+            if st.button("🗑️ Limpar Banco Chapas", type="secondary"):
+                limpar_banco()
+                st.rerun()
+        else:
+            st.info("Nenhum dado de chapa.")
+    elif senha_digitada:
+        st.sidebar.error("Senha Incorreta")
+        # ==============================================================================
 # TELA 3: SUPER ADMIN (MANUTENÇÃO DE BANCO)
 # ==============================================================================
 elif modo_acesso == "Super Admin (TI)":
@@ -481,63 +540,3 @@ elif modo_acesso == "Super Admin (TI)":
 
     elif senha_digitada:
         st.error("Acesso Negado.")
-            
-            # --- LÓGICA DE EXPORTAÇÃO CORRIGIDA ---
-            lista_exportacao = []
-
-            for index, row in df_banco.iterrows():
-                # A) Linha ORIGINAL
-                linha_original = {
-                    'Lote': row['lote'],
-                    'Reserva': row['reserva'],
-                    'SAP': row['cod_sap'],
-                    'Descrição': row['descricao'],
-                    'Peso Lançamento (kg)': formatar_br(row['peso_teorico']), # Peso Teórico
-                    'Status': row['status_reserva'],
-                    'Qtd': row['qtd'],
-                    'Largura Real': row['largura_real_mm'],
-                    'Largura Consid.': row['largura_corte_mm'],
-                    'Comp. Real': row['tamanho_real_mm'],
-                    'Comp. Consid.': row['tamanho_corte_mm']
-                }
-                lista_exportacao.append(linha_original)
-
-                # B) Linha VIRTUAL (SUCATA)
-                # Verifica se existe sucata (maior que 0.001 para evitar sujeira de ponto flutuante)
-                if row['sucata'] > 0.001:
-                    linha_virtual = {
-                        'Lote': "VIRTUAL",
-                        'Reserva': row['reserva'],
-                        'SAP': row['cod_sap'],
-                        'Descrição': f"SUCATA - {row['descricao']}",
-                        'Peso Lançamento (kg)': formatar_br(row['sucata']), # Peso Sucata
-                        'Status': row['status_reserva'],
-                        'Qtd': 1,
-                        'Largura Real': 0,
-                        'Largura Consid.': 0,
-                        'Comp. Real': 0,
-                        'Comp. Consid.': 0
-                    }
-                    lista_exportacao.append(linha_virtual)
-
-            df_export_final = pd.DataFrame(lista_exportacao)
-            
-            cols_order = ['Lote', 'Reserva', 'SAP', 'Descrição', 'Peso Lançamento (kg)', 'Status', 'Qtd', 'Largura Real', 'Largura Consid.', 'Comp. Real', 'Comp. Consid.']
-            # Garante que só ordena colunas que existem
-            cols_final = [c for c in cols_order if c in df_export_final.columns]
-            df_export_final = df_export_final[cols_final]
-                
-            buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                df_export_final.to_excel(writer, index=False)
-            
-            st.markdown("---")
-            st.download_button("📥 Baixar Excel Chapas", buffer.getvalue(), "Relatorio_Chapas.xlsx", type="primary")
-            
-            if st.button("🗑️ Limpar Banco Chapas", type="secondary"):
-                limpar_banco()
-                st.rerun()
-        else:
-            st.info("Nenhum dado de chapa.")
-    elif senha_digitada:
-        st.sidebar.error("Senha Incorreta")
