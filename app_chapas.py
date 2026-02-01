@@ -174,7 +174,7 @@ def carregar_base_sap():
 # --- 3. CONTROLE DE ACESSO ---
 st.sidebar.title("🔐 Acesso Chapas")
 modo_acesso = st.sidebar.radio("Selecione o Perfil:", 
-    ["Operador (Chão de Fábrica)", "Administrador (Escritório)", "Super Admin (TI)"])
+    ["Operador (Chão de Fábrica)", "Administrador (Escritório)", "Super Admin"])
 
 df_sap = carregar_base_sap()
 if df_sap is None:
@@ -399,10 +399,10 @@ elif modo_acesso == "Administrador (Escritório)":
     elif senha_digitada: st.sidebar.error("Senha Incorreta")
 
 # ==============================================================================
-# TELA 3: SUPER ADMIN (TI) - MANUTENÇÃO
+# TELA 3: SUPER ADMIN
 # ==============================================================================
-elif modo_acesso == "Super Admin (TI)":
-    st.title("🛠️ Super Admin (TI): Manutenção")
+elif modo_acesso == "Super Admin":
+    st.title("🛠️ Super Admin (Manutenção)")
     st.markdown("---")
     
     SENHA_MESTRA = "Workaround&97146605"
@@ -413,33 +413,55 @@ elif modo_acesso == "Super Admin (TI)":
         
         # 1. ZERAR TUDO
         st.subheader("1. Reset Geral (Perigo)")
-        st.warning("⚠️ Esta ação apaga todos os registros e reinicia os lotes para BRASA00001.")
+        st.warning("⚠️ Isso apaga TUDO e reinicia os lotes para BRASA00001 (IDs voltam a 1).")
         if st.button("💣 ZERAR BANCO DE DADOS COMPLETO", type="primary"):
             try:
                 conn = sqlite3.connect('dados_chapas.db')
                 c = conn.cursor()
-                c.execute("DELETE FROM producao")
-                c.execute("DELETE FROM sequencia_lotes")
+                c.execute("DROP TABLE IF EXISTS producao")
+                c.execute("DROP TABLE IF EXISTS sequencia_lotes")
                 conn.commit()
                 conn.close()
-                st.success("Banco limpo com sucesso! Contagem reiniciada.")
+                st.success("Banco deletado. Recarregue a página para ele recriar do zero (IDs resetados).")
             except Exception as e: st.error(f"Erro: {e}")
 
         st.markdown("---")
         
-        # 2. MANUTENÇÃO SIMPLES (EXCLUSÃO POR ID)
-        st.subheader("2. Manutenção de Registros")
+        # 2. AJUSTAR CONTADOR DE LOTE
+        st.subheader("2. Ajustar Contador de Lotes (Correção Manual)")
+        st.info("Use isso se você apagou um lote (ex: 4) e quer que o próximo seja o 4 de novo (defina como 3).")
         
+        conn = sqlite3.connect('dados_chapas.db')
+        df_seq = pd.read_sql_query("SELECT * FROM sequencia_lotes", conn)
+        st.dataframe(df_seq)
+        
+        c1, c2, c3 = st.columns(3)
+        cod_sap_alvo = c1.number_input("Cód. SAP:", step=1, format="%d")
+        novo_valor = c2.number_input("Definir 'Último Número' para:", min_value=0, step=1)
+        
+        if c3.button("Salvar Correção de Lote"):
+            try:
+                c = conn.cursor()
+                c.execute("UPDATE sequencia_lotes SET ultimo_numero = ? WHERE cod_sap = ?", (novo_valor, cod_sap_alvo))
+                conn.commit()
+                st.success(f"Contador do SAP {cod_sap_alvo} atualizado para {novo_valor}. Próximo será {novo_valor + 1}.")
+                st.rerun()
+            except Exception as e: st.error(f"Erro: {e}")
+        conn.close()
+
+        st.markdown("---")
+
+        # 3. MANUTENÇÃO SIMPLES
+        st.subheader("3. Excluir Registros Específicos")
         conn = sqlite3.connect('dados_chapas.db')
         df_prod = pd.read_sql_query("SELECT * FROM producao", conn)
         conn.close()
         
-        st.write("Visualização da Tabela (Use o ID para excluir):")
         st.dataframe(df_prod, use_container_width=True)
         
-        c1, c2 = st.columns([1, 2])
-        id_para_excluir = c1.number_input("Digitar ID para Excluir:", min_value=0, step=1)
-        if c2.button("🗑️ Excluir Linha Específica"):
+        col_del_1, col_del_2 = st.columns([1, 2])
+        id_para_excluir = col_del_1.number_input("ID para Excluir:", min_value=0, step=1)
+        if col_del_2.button("🗑️ Excluir Linha"):
             if id_para_excluir > 0:
                 try:
                     conn = sqlite3.connect('dados_chapas.db')
@@ -447,28 +469,8 @@ elif modo_acesso == "Super Admin (TI)":
                     c.execute("DELETE FROM producao WHERE id = ?", (id_para_excluir,))
                     conn.commit()
                     conn.close()
-                    st.success(f"Registro ID {id_para_excluir} excluído.")
+                    st.success(f"ID {id_para_excluir} apagado.")
                     st.rerun()
                 except Exception as e: st.error(f"Erro: {e}")
-            else:
-                st.warning("Digite um ID válido.")
 
-        st.markdown("---")
-        
-        # 3. SQL AVANÇADO
-        st.subheader("3. SQL Avançado")
-        comando_sql = st.text_area("Executar comando SQL:")
-        if st.button("Executar SQL"):
-            try:
-                conn = sqlite3.connect('dados_chapas.db')
-                c = conn.cursor()
-                c.execute(comando_sql)
-                conn.commit()
-                st.success("Comando executado.")
-                if comando_sql.strip().upper().startswith("SELECT"):
-                    st.write(c.fetchall())
-                conn.close()
-            except Exception as e: st.error(f"Erro SQL: {e}")
-
-    elif senha_digitada:
-        st.error("Acesso Negado")
+    elif senha_digitada: st.error("Acesso Negado")
