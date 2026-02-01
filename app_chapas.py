@@ -156,44 +156,35 @@ def regra_multiplos_300_baixo(mm):
         return (valor // 300) * 300
     except: return 0
 
-# --- CARREGAMENTO ---
-@st.cache_data
+# --- CARREGAMENTO SIMPLIFICADO (SEM CACHE PARA EVITAR ERROS) ---
 def carregar_base_sap():
-    # Tenta método 1: Caminho Relativo Direto
-    if os.path.exists("base_sap.xlsx"):
-        try:
-            return pd.read_excel("base_sap.xlsx")
-        except: pass
+    # Procura na mesma pasta do script (Caminho Relativo)
+    try:
+        if os.path.exists("base_sap.xlsx"):
+            df = pd.read_excel("base_sap.xlsx")
+        else:
+            # Tenta caminho absoluto por garantia
+            pasta_script = os.path.dirname(os.path.abspath(__file__))
+            caminho_fixo = os.path.join(pasta_script, "base_sap.xlsx")
+            if os.path.exists(caminho_fixo):
+                df = pd.read_excel(caminho_fixo)
+            else:
+                return None
         
-    # Tenta método 2: Caminho Absoluto
-    pasta_script = os.path.dirname(os.path.abspath(__file__))
-    caminho_fixo = os.path.join(pasta_script, "base_sap.xlsx")
-    if os.path.exists(caminho_fixo):
-        try:
-            return pd.read_excel(caminho_fixo)
-        except: pass
-        
-    return None
-
-def processar_df_sap(df):
-    if df is not None:
+        # Processamento básico
         df.columns = df.columns.str.strip()
         df['Produto'] = pd.to_numeric(df['Produto'], errors='coerce').fillna(0).astype(int)
         if df['Peso por Metro'].dtype == 'object':
-             df['Peso por Metro'] = df['Peso por Metro'].str.replace(',', '.').astype(float)
+                df['Peso por Metro'] = df['Peso por Metro'].str.replace(',', '.').astype(float)
         return df
-    return None
+    except: 
+        return None
 
 # --- 3. CONTROLE DE ACESSO ---
 st.sidebar.title("🔐 Acesso Chapas")
 modo_acesso = st.sidebar.radio("Selecione o Perfil:", ["Operador (Chão de Fábrica)", "Administrador (Escritório)"])
 
-# Tenta carregar, mas NÃO TRAVA O SCRIPT se falhar
-df_raw = carregar_base_sap()
-df_sap = processar_df_sap(df_raw)
-
-# Se falhar, guardamos o erro para mostrar apenas onde for relevante
-erro_arquivo = df_sap is None
+df_sap = carregar_base_sap()
 
 # ==============================================================================
 # TELA 1: OPERADOR (Tablet)
@@ -201,9 +192,9 @@ erro_arquivo = df_sap is None
 if modo_acesso == "Operador (Chão de Fábrica)":
     st.title("🏭 Chapas: Bipagem")
     
-    if erro_arquivo:
-        st.error("🚨 ERRO: O arquivo `base_sap.xlsx` não foi encontrado!")
-        st.warning("O sistema não pode prosseguir sem a base de dados.")
+    if df_sap is None:
+        st.error("🚨 O arquivo `base_sap.xlsx` não foi encontrado!")
+        st.warning("Verifique se o arquivo está na pasta raiz do projeto.")
     else:
         # Lógica Normal do Operador
         if 'wizard_data' not in st.session_state: st.session_state.wizard_data = {}
@@ -359,11 +350,9 @@ elif modo_acesso == "Administrador (Escritório)":
 
     senha_digitada = st.sidebar.text_input("Senha Admin", type="password")
     
-    # MOSTRA DIAGNÓSTICO SÓ PARA O ADMIN SE DER ERRO
-    if erro_arquivo:
-        st.sidebar.warning(f"⚠️ Alerta: `base_sap.xlsx` não carregado.")
-        st.sidebar.text(f"Pasta Atual: {os.getcwd()}")
-        st.sidebar.text(f"Arquivos na pasta: {os.listdir(os.getcwd())}")
+    # Se o arquivo não carregar, avisa aqui mas DEIXA O RESTO FUNCIONAR (Limpeza de banco, etc)
+    if df_sap is None:
+        st.sidebar.warning("⚠️ Base SAP desconectada.")
 
     if senha_digitada == SENHA_CORRETA:
         st.sidebar.success("Acesso Chapas Liberado")
@@ -381,6 +370,7 @@ elif modo_acesso == "Administrador (Escritório)":
             
             st.markdown("### Conferência")
             
+            # Tabela Editável
             df_editado = st.data_editor(
                 df_banco,
                 use_container_width=True,
@@ -407,6 +397,7 @@ elif modo_acesso == "Administrador (Escritório)":
                 st.success("Status atualizados!")
                 st.rerun()
             
+            # --- EXPORTAÇÃO ---
             lista_exportacao = []
 
             for index, row in df_banco.iterrows():
