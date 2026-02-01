@@ -174,7 +174,7 @@ def carregar_base_sap():
 # --- 3. CONTROLE DE ACESSO ---
 st.sidebar.title("🔐 Acesso Chapas")
 modo_acesso = st.sidebar.radio("Selecione o Perfil:", 
-    ["Operador (Chão de Fábrica)", "Administrador (Escritório)", "Super Admin (TI)"])
+    ["Operador (Chão de Fábrica)", "Administrador (Escritório)", "Super Admin"])
 
 df_sap = carregar_base_sap()
 if df_sap is None:
