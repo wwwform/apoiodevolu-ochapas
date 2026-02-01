@@ -3,13 +3,12 @@ import pandas as pd
 import io
 import os
 import sqlite3
-import math
 from datetime import datetime
 
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="Sistema Chapas", layout="wide")
 
-# CSS BLINDADO (Laranja)
+# CSS BLINDADO (Laranja para Chapas)
 st.markdown("""
 <style>
     #MainMenu {visibility: hidden;}
@@ -70,14 +69,17 @@ def obter_e_incrementar_lote(cod_sap, apenas_visualizar=False):
     c = conn.cursor()
     c.execute("SELECT ultimo_numero FROM sequencia_lotes WHERE cod_sap = ?", (cod_sap,))
     resultado = c.fetchone()
+    
     if resultado:
         ultimo = resultado[0]
         proximo = ultimo + 1
     else:
         ultimo = 0
         proximo = 1
+    
     prefixo = "BRASA"
     lote_formatado = f"{prefixo}{proximo:05d}"
+    
     if not apenas_visualizar:
         c.execute('''
             INSERT INTO sequencia_lotes (cod_sap, ultimo_numero) 
@@ -153,52 +155,37 @@ def regra_multiplos_300_baixo(mm):
         return (valor // 300) * 300
     except: return 0
 
-# --- CARREGAMENTO FLEXÍVEL (PROCURA O ARQUIVO MESMO COM NOME ERRADO) ---
-# Esta função não usa cache para forçar a busca real
-def encontrar_e_carregar_base():
-    # 1. Lista todos os arquivos da pasta atual
-    pasta_atual = os.path.dirname(os.path.abspath(__file__))
-    arquivos = os.listdir(pasta_atual)
+# --- CARREGAMENTO IDÊNTICO AO SEU CÓDIGO FUNCIONAL ---
+@st.cache_data
+def carregar_base_sap():
+    # Tenta carregar exatamente como no seu outro site
+    pasta_script = os.path.dirname(os.path.abspath(__file__))
+    caminho_fixo = os.path.join(pasta_script, "base_sap.xlsx")
     
-    # Debug: Mostra para o Admin o que tem na pasta (Oculto para operador, visível na sidebar se precisar)
-    # st.sidebar.write(f"Arquivos na pasta: {arquivos}") 
-    
-    nome_alvo = "base_sap.xlsx"
-    arquivo_correto = None
-    
-    # 2. Procura insensível a maiúsculas/minúsculas
-    for f in arquivos:
-        if f.lower() == nome_alvo.lower():
-            arquivo_correto = os.path.join(pasta_atual, f)
-            break
-            
-    if arquivo_correto:
+    if os.path.exists(caminho_fixo):
         try:
-            df = pd.read_excel(arquivo_correto)
-            # Processamento
+            df = pd.read_excel(caminho_fixo)
             df.columns = df.columns.str.strip()
             df['Produto'] = pd.to_numeric(df['Produto'], errors='coerce').fillna(0).astype(int)
+            # Lê o Fator da coluna 'Peso por Metro'
             if df['Peso por Metro'].dtype == 'object':
                  df['Peso por Metro'] = df['Peso por Metro'].str.replace(',', '.').astype(float)
-            return df, arquivo_correto
-        except Exception as e:
-            return None, f"Erro ao ler: {str(e)}"
-    else:
-        return None, "Arquivo não encontrado na lista."
+            return df
+        except: return None
+    return None
 
 # --- 3. CONTROLE DE ACESSO ---
 st.sidebar.title("🔐 Acesso Chapas")
 modo_acesso = st.sidebar.radio("Selecione o Perfil:", ["Operador (Chão de Fábrica)", "Administrador (Escritório)"])
 
-# Tenta carregar
-df_sap, msg_erro = encontrar_e_carregar_base()
+df_sap = carregar_base_sap()
 
-# DIAGNÓSTICO NA SIDEBAR (Só aparece se der erro)
+# Se falhar, mostra o que tem na pasta para prova real (sem travar o Admin)
 if df_sap is None:
-    st.sidebar.error("❌ ERRO DE ARQUIVO")
-    st.sidebar.write(f"Msg: {msg_erro}")
-    st.sidebar.write("📂 Arquivos visíveis no sistema:")
-    st.sidebar.code("\n".join(os.listdir(os.path.dirname(os.path.abspath(__file__)))))
+    st.error("⚠️ Base SAP não carregada.")
+    # Mostra lista de arquivos para debug se o arquivo não for achado
+    pasta_atual = os.path.dirname(os.path.abspath(__file__))
+    st.sidebar.warning(f"Arquivos na pasta do servidor:\n{os.listdir(pasta_atual)}")
 
 # ==============================================================================
 # TELA 1: OPERADOR (Tablet)
@@ -206,11 +193,7 @@ if df_sap is None:
 if modo_acesso == "Operador (Chão de Fábrica)":
     st.title("🏭 Chapas: Bipagem")
     
-    if df_sap is None:
-        st.error("🚨 Base de dados não carregada.")
-        st.info("O sistema listou os arquivos na barra lateral esquerda. Verifique se o nome está correto.")
-    else:
-        # Lógica Normal do Operador
+    if df_sap is not None:
         if 'wizard_data' not in st.session_state: st.session_state.wizard_data = {}
         if 'wizard_step' not in st.session_state: st.session_state.wizard_step = 0
         if 'item_id' not in st.session_state: st.session_state.item_id = 0 
@@ -291,6 +274,7 @@ if modo_acesso == "Operador (Chão de Fábrica)":
                             largura_real = st.session_state.wizard_data['Largura Real (mm)']
                             tamanho_real = comp
                             
+                            # CÁLCULOS
                             largura_corte = regra_multiplos_300_baixo(largura_real)
                             tamanho_corte = regra_multiplos_300_baixo(tamanho_real)
                             
@@ -353,6 +337,8 @@ if modo_acesso == "Operador (Chão de Fábrica)":
 
         st.text_input("BIPAR CÓDIGO CHAPA:", key="input_scanner", on_change=iniciar_bipagem)
         st.info("ℹ️ Sistema Chapas: Regra 300mm (Para Baixo).")
+    else:
+        st.info("Aguardando carregamento da base de dados...")
 
 # ==============================================================================
 # TELA 2: ADMINISTRADOR
@@ -364,9 +350,6 @@ elif modo_acesso == "Administrador (Escritório)":
 
     senha_digitada = st.sidebar.text_input("Senha Admin", type="password")
     
-    if df_sap is None:
-        st.sidebar.warning("⚠️ Base SAP desconectada. Verifique os arquivos.")
-
     if senha_digitada == SENHA_CORRETA:
         st.sidebar.success("Acesso Chapas Liberado")
         
