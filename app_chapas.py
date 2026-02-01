@@ -69,17 +69,29 @@ garantir_cabecalhos()
 
 # --- CORREÇÃO DE NÚMEROS (PONTO/VÍRGULA) ---
 def limpar_numero_sap(valor):
-    """Garante que '392,5' (Texto) vire 392.5 (Float)"""
+    """
+    Garante que '392,5' vire 392.5
+    Se vier 392.5 (float), mantém.
+    """
     if pd.isna(valor): return 0.0
+    
+    # Se já for float/int, verifica se não está dividido por 1000 errado (ex: 39.25 em vez de 392.5)
+    # Mas aqui assumimos que o valor bruto está certo, só a formatação que pode estar errada.
+    if isinstance(valor, (int, float)): 
+        return float(valor)
+        
     s = str(valor).strip()
     if not s: return 0.0
-    if isinstance(valor, (int, float)): return float(valor)
+    
+    # Troca vírgula por ponto
     s = s.replace(',', '.')
-    try: return float(s)
-    except: return 0.0
+    
+    try: 
+        return float(s)
+    except: 
+        return 0.0
 
 def formatar_br(valor):
-    """Garante saída com vírgula e 3 casas"""
     try:
         val = float(valor)
         return f"{val:,.3f}".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -206,6 +218,9 @@ if modo_acesso == "Operador (Chão de Fábrica)":
         @st.dialog("📦 Entrada")
         def wizard():
             st.write(f"**Item:** {st.session_state.wizard_data.get('Cód. SAP')} - {st.session_state.wizard_data.get('Descrição')}")
+            # MOSTRA O FATOR LIDO PARA CONFERÊNCIA
+            fator = st.session_state.wizard_data.get('Fator SAP', 0)
+            st.info(f"Fator SAP Lido: **{fator}** (Se estiver 39.25 está errado, deve ser 392.5)")
             st.markdown("---")
             if st.session_state.wizard_step == 1:
                 with st.form("f1"):
@@ -252,7 +267,7 @@ if modo_acesso == "Operador (Chão de Fábrica)":
                                 lc = regra_multiplos_300_baixo(lr)
                                 tc = regra_multiplos_300_baixo(comp)
                                 
-                                # Cálculo corrigido com Fator em Float (392.5)
+                                # Cálculo: Fator * Larg(m) * Comp(m) * Qtd
                                 pt = fsap * (lc/1000.0) * (tc/1000.0) * qtd
                                 suc = pr - pt
                                 
@@ -266,7 +281,7 @@ if modo_acesso == "Operador (Chão de Fábrica)":
                                     "Peso Teórico": pt, "Sucata": suc
                                 }
                                 lote = salvar_no_banco(dados)
-                                st.toast(f"Chapa Salva! Lote: {lote}", icon="🏗️")
+                                st.toast(f"Lote {lote} Salvo!", icon="✅")
                                 st.session_state.wizard_data = {}
                                 st.session_state.wizard_step = 0
                                 st.session_state.input_scanner = ""
@@ -331,7 +346,8 @@ elif modo_acesso == "Administrador (Escritório)":
                     df_exp = df_exp[cols_final]
                     buf = io.BytesIO()
                     with pd.ExcelWriter(buf, engine='openpyxl') as writer: df_exp.to_excel(writer, index=False)
-                    st.download_button("Baixar Excel", buf.getvalue(), "Relatorio_Chapas.xlsx", "primary")
+                    st.markdown("---")
+                    st.download_button("📥 Baixar Excel", buf.getvalue(), "Relatorio_Chapas.xlsx", "primary")
             
             with t2:
                 pt = df['peso_real'].sum()
