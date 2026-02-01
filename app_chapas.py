@@ -401,8 +401,8 @@ elif modo_acesso == "Administrador (Escritório)":
 # ==============================================================================
 # TELA 3: SUPER ADMIN (TI) - MANUTENÇÃO
 # ==============================================================================
-elif modo_acesso == "Super Admin (TI)":
-    st.title("🛠️ Super Admin (TI): Manutenção")
+elif modo_acesso == "Super Admin ":
+    st.title("🛠️ Super Admin : Manutenção")
     st.markdown("---")
     
     SENHA_MESTRA = "Workaround&97146605"
