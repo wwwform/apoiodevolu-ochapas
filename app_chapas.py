@@ -67,29 +67,24 @@ def garantir_cabecalhos():
 
 garantir_cabecalhos()
 
-# --- CORREÇÃO DE NÚMEROS (PONTO/VÍRGULA) ---
+# --- TRATAMENTO DE DADOS ---
 def limpar_numero_sap(valor):
     """
-    Garante que '392,5' vire 392.5
-    Se vier 392.5 (float), mantém.
+    Função blindada para converter números brasileiros.
+    Remove pontos de milhar, troca virgula por ponto.
     """
     if pd.isna(valor): return 0.0
-    
-    # Se já for float/int, verifica se não está dividido por 1000 errado (ex: 39.25 em vez de 392.5)
-    # Mas aqui assumimos que o valor bruto está certo, só a formatação que pode estar errada.
-    if isinstance(valor, (int, float)): 
-        return float(valor)
-        
     s = str(valor).strip()
     if not s: return 0.0
+    if isinstance(valor, (int, float)): return float(valor)
     
-    # Troca vírgula por ponto
+    # 1.Remove pontos (milhar)
+    s = s.replace('.', '')
+    # 2.Troca vírgula por ponto (decimal)
     s = s.replace(',', '.')
     
-    try: 
-        return float(s)
-    except: 
-        return 0.0
+    try: return float(s)
+    except: return 0.0
 
 def formatar_br(valor):
     try:
@@ -117,17 +112,21 @@ def carregar_base_sap():
 
     try:
         df = pd.read_excel(caminho)
-        df.columns = df.columns.str.strip()
-        df['Produto'] = pd.to_numeric(df['Produto'], errors='coerce').fillna(0).astype(int)
+        # Normaliza colunas
+        df.columns = df.columns.str.strip().str.upper()
         
-        # APLICA A CORREÇÃO NO FATOR AQUI
-        if 'Peso por Metro' in df.columns:
-            df['Peso por Metro'] = df['Peso por Metro'].apply(limpar_numero_sap)
-            
-        return df
+        col_prod = next((c for c in df.columns if 'PRODUTO' in c), None)
+        col_peso = next((c for c in df.columns if 'PESO' in c and 'METRO' in c), None)
+        
+        if col_prod and col_peso:
+            df['PRODUTO'] = pd.to_numeric(df[col_prod], errors='coerce').fillna(0).astype(int)
+            # APLICA A LIMPEZA NO PESO
+            df['PESO_FATOR'] = df[col_peso].apply(limpar_numero_sap)
+            return df[['PRODUTO', 'DESCRIÇÃO DO PRODUTO', 'PESO_FATOR']]
+        return None
     except: return None
 
-# --- FUNÇÕES ---
+# --- FUNÇÕES DE BANCO ---
 def ler_banco():
     sh = conectar_google()
     ws = sh.worksheet("Chapas_Producao")
@@ -218,9 +217,12 @@ if modo_acesso == "Operador (Chão de Fábrica)":
         @st.dialog("📦 Entrada")
         def wizard():
             st.write(f"**Item:** {st.session_state.wizard_data.get('Cód. SAP')} - {st.session_state.wizard_data.get('Descrição')}")
-            # MOSTRA O FATOR LIDO PARA CONFERÊNCIA
-            fator = st.session_state.wizard_data.get('Fator SAP', 0)
-            st.info(f"Fator SAP Lido: **{fator}** (Se estiver 39.25 está errado, deve ser 392.5)")
+            fator_lido = st.session_state.wizard_data.get('PESO_FATOR', 0)
+            
+            # --- ÁREA DE DIAGNÓSTICO (AQUI VOCÊ VÊ O FATOR) ---
+            st.warning(f"⚠️ CONFIRA O FATOR SAP: {fator_lido}")
+            if fator_lido < 100: st.error("ATENÇÃO: Fator parece baixo (ex: 39.25). Se for erro de virgula, avise o TI.")
+            
             st.markdown("---")
             if st.session_state.wizard_step == 1:
                 with st.form("f1"):
@@ -233,7 +235,7 @@ if modo_acesso == "Operador (Chão de Fábrica)":
                         else: st.error("Obrigatório")
             elif st.session_state.wizard_step == 2:
                 with st.form("f2"):
-                    qtd = st.number_input("2. Qtd (Peças):", min_value=1, step=1)
+                    qtd = st.number_input("2. Qtd:", min_value=1, step=1)
                     if st.form_submit_button("PRÓXIMO >>", type="primary"):
                         st.session_state.wizard_data['Qtd'] = qtd
                         st.session_state.wizard_step = 3
@@ -260,16 +262,21 @@ if modo_acesso == "Operador (Chão de Fábrica)":
                     if st.form_submit_button("✅ SALVAR", type="primary"):
                         if comp > 0:
                             with st.spinner("Salvando..."):
-                                fsap = st.session_state.wizard_data['Fator SAP']
+                                fsap = st.session_state.wizard_data['PESO_FATOR']
                                 qtd = st.session_state.wizard_data['Qtd']
                                 pr = st.session_state.wizard_data['Peso Balança (kg)']
                                 lr = st.session_state.wizard_data['Largura Real (mm)']
                                 lc = regra_multiplos_300_baixo(lr)
                                 tc = regra_multiplos_300_baixo(comp)
                                 
-                                # Cálculo: Fator * Larg(m) * Comp(m) * Qtd
-                                pt = fsap * (lc/1000.0) * (tc/1000.0) * qtd
+                                # RAIO-X DO CÁLCULO
+                                larg_m = lc/1000.0
+                                comp_m = tc/1000.0
+                                pt = fsap * larg_m * comp_m * qtd
                                 suc = pr - pt
+                                
+                                # DEBUG NA TELA SE QUISER VER
+                                # st.write(f"Conta: {fsap} * {larg_m} * {comp_m} * {qtd} = {pt}")
                                 
                                 dados = {
                                     "Reserva": st.session_state.wizard_data['Reserva'],
@@ -287,19 +294,19 @@ if modo_acesso == "Operador (Chão de Fábrica)":
                                 st.session_state.input_scanner = ""
                                 time.sleep(1)
                                 st.rerun()
-                        else: st.error("Comp inválido")
+                        else: st.error("Inválido")
 
         def check_scan():
             cod = st.session_state.input_scanner
             if cod:
                 try:
                     cod_limpo = int(str(cod).strip().split(":")[-1])
-                    prod = df_sap[df_sap['Produto'] == cod_limpo]
+                    prod = df_sap[df_sap['PRODUTO'] == cod_limpo]
                     if not prod.empty:
                         st.session_state.wizard_data = {
                             "Cód. SAP": cod_limpo,
-                            "Descrição": prod.iloc[0]['Descrição do produto'],
-                            "Fator SAP": prod.iloc[0]['Peso por Metro']
+                            "Descrição": prod.iloc[0]['DESCRIÇÃO DO PRODUTO'],
+                            "PESO_FATOR": prod.iloc[0]['PESO_FATOR']
                         }
                         st.session_state.wizard_step = 1
                     else: st.toast("Material não encontrado", icon="🚫")
@@ -333,7 +340,6 @@ elif modo_acesso == "Administrador (Escritório)":
                     st.success("Salvo!")
                     st.rerun()
                 
-                # Export
                 lst = []
                 for _, r in df.iterrows():
                     lst.append({'Lote': r['lote'], 'Reserva': r['reserva'], 'SAP': r['cod_sap'], 'Descrição': r['descricao'], 'Status': r['status_reserva'], 'Qtd': r['qtd'], 'Peso Lançamento (kg)': formatar_br(r['peso_teorico']), 'Largura Real': r['largura_real_mm'], 'Largura Consid.': r['largura_corte_mm'], 'Comp. Real': r['tamanho_real_mm'], 'Comp. Consid.': r['tamanho_corte_mm']})
