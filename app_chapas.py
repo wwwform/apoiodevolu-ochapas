@@ -3,7 +3,6 @@ import pandas as pd
 import io
 import os
 import sqlite3
-import math
 from datetime import datetime
 
 # --- CONFIGURAÇÃO ---
@@ -26,33 +25,12 @@ st.markdown("""
         font-size: 1.2rem !important;
         font-weight: bold;
     }
+    .stInfo {
+        font-size: 1.2rem;
+        font-weight: bold;
+    }
 </style>
 """, unsafe_allow_html=True)
-
-# --- DIAGNÓSTICO DE ARQUIVOS (PARA RESOLVER O ERRO DO GITHUB) ---
-# Isso vai mostrar na barra lateral o que o site está "enxergando"
-st.sidebar.title("🔍 Diagnóstico do Sistema")
-pasta_atual = os.getcwd()
-arquivos_na_pasta = os.listdir(pasta_atual)
-st.sidebar.write(f"**Pasta Atual:** `{pasta_atual}`")
-st.sidebar.write("**Arquivos Encontrados:**")
-st.sidebar.write(arquivos_na_pasta)
-
-# Verifica se o arquivo existe (Ignorando maiúsculas/minúsculas para ajudar)
-nome_arquivo_alvo = "base_sap.xlsx"
-arquivo_encontrado = None
-
-for f in arquivos_na_pasta:
-    if f.lower() == nome_arquivo_alvo.lower():
-        arquivo_encontrado = f
-        break
-
-if arquivo_encontrado:
-    st.sidebar.success(f"✅ Arquivo Base OK: {arquivo_encontrado}")
-else:
-    st.sidebar.error(f"❌ ARQUIVO NÃO ENCONTRADO!")
-    st.sidebar.warning(f"O sistema procura por: `{nome_arquivo_alvo}`")
-    st.sidebar.info("Verifique na lista acima se o nome está diferente.")
 
 # --- 1. BANCO DE DADOS (CHAPAS) ---
 def init_db():
@@ -178,13 +156,17 @@ def regra_multiplos_300_baixo(mm):
     except: return 0
 
 @st.cache_data
-def carregar_base_sap(nome_arquivo):
-    if nome_arquivo is None: return None
-    if os.path.exists(nome_arquivo):
+def carregar_base_sap():
+    # Procura na mesma pasta do script
+    pasta_script = os.path.dirname(os.path.abspath(__file__))
+    caminho_fixo = os.path.join(pasta_script, "base_sap.xlsx")
+    
+    if os.path.exists(caminho_fixo):
         try:
-            df = pd.read_excel(nome_arquivo)
+            df = pd.read_excel(caminho_fixo)
             df.columns = df.columns.str.strip()
             df['Produto'] = pd.to_numeric(df['Produto'], errors='coerce').fillna(0).astype(int)
+            # Lê o Fator da coluna 'Peso por Metro'
             if df['Peso por Metro'].dtype == 'object':
                  df['Peso por Metro'] = df['Peso por Metro'].str.replace(',', '.').astype(float)
             return df
@@ -195,25 +177,20 @@ def carregar_base_sap(nome_arquivo):
 st.sidebar.title("🔐 Acesso Chapas")
 modo_acesso = st.sidebar.radio("Selecione o Perfil:", ["Operador (Chão de Fábrica)", "Administrador (Escritório)"])
 
-# Tenta carregar usando o nome encontrado no diagnóstico
-df_sap = carregar_base_sap(arquivo_encontrado)
+df_sap = carregar_base_sap()
 
-# SE NÃO CARREGAR, MOSTRA AVISO MAS NÃO TRAVA O ADMIN
+# Se não carregar, avisa de forma discreta, mas não trava o layout inicial
 if df_sap is None:
-    st.error("🚨 ERRO CRÍTICO: BASE SAP NÃO CARREGADA")
-    st.info("Veja o diagnóstico na barra lateral esquerda para corrigir o nome do arquivo no GitHub.")
-    # Não usamos st.stop() aqui para permitir que o Admin entre e veja o erro, se quiser.
+    st.error("⚠️ Aviso: Arquivo `base_sap.xlsx` não encontrado na pasta.")
+    # Não usamos st.stop() aqui para você ver a tela e os menus
 
 # ==============================================================================
-# TELA 1: OPERADOR (Tablet)
+# TELA 1: OPERADOR
 # ==============================================================================
 if modo_acesso == "Operador (Chão de Fábrica)":
     st.title("🏭 Chapas: Bipagem")
     
-    if df_sap is None:
-        st.warning("⚠️ Sistema Pausado: Aguardando arquivo 'base_sap.xlsx'. Contate o Administrador.")
-    else:
-        # Lógica do Operador (Só roda se tiver base)
+    if df_sap is not None:
         if 'wizard_data' not in st.session_state: st.session_state.wizard_data = {}
         if 'wizard_step' not in st.session_state: st.session_state.wizard_step = 0
         if 'item_id' not in st.session_state: st.session_state.item_id = 0 
@@ -294,7 +271,6 @@ if modo_acesso == "Operador (Chão de Fábrica)":
                             largura_real = st.session_state.wizard_data['Largura Real (mm)']
                             tamanho_real = comp
                             
-                            # CÁLCULOS
                             largura_corte = regra_multiplos_300_baixo(largura_real)
                             tamanho_corte = regra_multiplos_300_baixo(tamanho_real)
                             
@@ -357,6 +333,8 @@ if modo_acesso == "Operador (Chão de Fábrica)":
 
         st.text_input("BIPAR CÓDIGO CHAPA:", key="input_scanner", on_change=iniciar_bipagem)
         st.info("ℹ️ Sistema Chapas: Regra 300mm (Para Baixo).")
+    else:
+        st.info("Aguardando arquivo base para iniciar operação...")
 
 # ==============================================================================
 # TELA 2: ADMINISTRADOR
