@@ -9,7 +9,7 @@ from datetime import datetime
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="Sistema Chapas", layout="wide")
 
-# CSS BLINDADO
+# CSS BLINDADO (Laranja)
 st.markdown("""
 <style>
     #MainMenu {visibility: hidden;}
@@ -33,7 +33,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 1. BANCO DE DADOS ---
+# --- 1. BANCO DE DADOS (CHAPAS) ---
 def init_db():
     conn = sqlite3.connect('dados_chapas.db', check_same_thread=False)
     c = conn.cursor()
@@ -70,14 +70,17 @@ def obter_e_incrementar_lote(cod_sap, apenas_visualizar=False):
     c = conn.cursor()
     c.execute("SELECT ultimo_numero FROM sequencia_lotes WHERE cod_sap = ?", (cod_sap,))
     resultado = c.fetchone()
+    
     if resultado:
         ultimo = resultado[0]
         proximo = ultimo + 1
     else:
         ultimo = 0
         proximo = 1
+    
     prefixo = "BRASA"
     lote_formatado = f"{prefixo}{proximo:05d}"
+    
     if not apenas_visualizar:
         c.execute('''
             INSERT INTO sequencia_lotes (cod_sap, ultimo_numero) 
@@ -147,24 +150,29 @@ def formatar_br(valor):
     except: return str(valor)
 
 def regra_multiplos_300_baixo(mm):
+    """Regra 300mm para BAIXO"""
     try:
         valor = int(float(mm))
         return (valor // 300) * 300
     except: return 0
 
+# --- CARREGAMENTO DO ARQUIVO ---
 @st.cache_data
 def carregar_base_sap():
+    # Tenta carregar base_sap.xlsx
+    pasta_script = os.path.dirname(os.path.abspath(__file__))
+    caminho_fixo = os.path.join(pasta_script, "base_sap.xlsx")
+    
+    # Verifica caminho relativo e absoluto
+    if os.path.exists("base_sap.xlsx"):
+        caminho_final = "base_sap.xlsx"
+    elif os.path.exists(caminho_fixo):
+        caminho_final = caminho_fixo
+    else:
+        return None
+
     try:
-        if os.path.exists("base_sap.xlsx"):
-            df = pd.read_excel("base_sap.xlsx")
-        else:
-            pasta_script = os.path.dirname(os.path.abspath(__file__))
-            caminho_fixo = os.path.join(pasta_script, "base_sap.xlsx")
-            if os.path.exists(caminho_fixo):
-                df = pd.read_excel(caminho_fixo)
-            else:
-                return None
-        
+        df = pd.read_excel(caminho_final)
         df.columns = df.columns.str.strip()
         df['Produto'] = pd.to_numeric(df['Produto'], errors='coerce').fillna(0).astype(int)
         if df['Peso por Metro'].dtype == 'object':
@@ -174,15 +182,13 @@ def carregar_base_sap():
         return None
 
 # --- 3. CONTROLE DE ACESSO ---
-# (Mude o título conforme o arquivo: "Acesso" ou "Acesso Chapas")
-st.sidebar.title("🔐 Acesso Restrito") 
-modo_acesso = st.sidebar.radio("Selecione o Perfil:", 
-    ["Operador (Chão de Fábrica)", "Administrador (Escritório)", "Super Admin (TI)"])
+st.sidebar.title("🔐 Acesso Chapas")
+modo_acesso = st.sidebar.radio("Selecione o Perfil:", ["Operador (Chão de Fábrica)", "Administrador (Escritório)", "Super Admin (TI)"])
 
 df_sap = carregar_base_sap()
 
 # ==============================================================================
-# TELA 1: OPERADOR
+# TELA 1: OPERADOR (Tablet)
 # ==============================================================================
 if modo_acesso == "Operador (Chão de Fábrica)":
     st.title("🏭 Chapas: Bipagem")
@@ -362,6 +368,7 @@ elif modo_acesso == "Administrador (Escritório)":
             
             st.markdown("### Conferência")
             
+            # Tabela Editável
             df_editado = st.data_editor(
                 df_banco,
                 use_container_width=True,
@@ -388,17 +395,16 @@ elif modo_acesso == "Administrador (Escritório)":
                 st.success("Status atualizados!")
                 st.rerun()
             
-            # --- LÓGICA DE EXPORTAÇÃO CORRIGIDA ---
+            # --- EXPORTAÇÃO CORRIGIDA ---
             lista_exportacao = []
 
             for index, row in df_banco.iterrows():
-                # A) Linha ORIGINAL
                 linha_original = {
                     'Lote': row['lote'],
                     'Reserva': row['reserva'],
                     'SAP': row['cod_sap'],
                     'Descrição': row['descricao'],
-                    'Peso Lançamento (kg)': formatar_br(row['peso_teorico']), # Peso Teórico
+                    'Peso Lançamento (kg)': formatar_br(row['peso_teorico']), 
                     'Status': row['status_reserva'],
                     'Qtd': row['qtd'],
                     'Largura Real': row['largura_real_mm'],
@@ -408,15 +414,13 @@ elif modo_acesso == "Administrador (Escritório)":
                 }
                 lista_exportacao.append(linha_original)
 
-                # B) Linha VIRTUAL (SUCATA)
-                # Verifica se existe sucata (maior que 0.001 para evitar sujeira de ponto flutuante)
                 if row['sucata'] > 0.001:
                     linha_virtual = {
                         'Lote': "VIRTUAL",
                         'Reserva': row['reserva'],
                         'SAP': row['cod_sap'],
                         'Descrição': f"SUCATA - {row['descricao']}",
-                        'Peso Lançamento (kg)': formatar_br(row['sucata']), # Peso Sucata
+                        'Peso Lançamento (kg)': formatar_br(row['sucata']), 
                         'Status': row['status_reserva'],
                         'Qtd': 1,
                         'Largura Real': 0,
@@ -427,9 +431,7 @@ elif modo_acesso == "Administrador (Escritório)":
                     lista_exportacao.append(linha_virtual)
 
             df_export_final = pd.DataFrame(lista_exportacao)
-            
             cols_order = ['Lote', 'Reserva', 'SAP', 'Descrição', 'Peso Lançamento (kg)', 'Status', 'Qtd', 'Largura Real', 'Largura Consid.', 'Comp. Real', 'Comp. Consid.']
-            # Garante que só ordena colunas que existem
             cols_final = [c for c in cols_order if c in df_export_final.columns]
             df_export_final = df_export_final[cols_final]
                 
@@ -447,96 +449,46 @@ elif modo_acesso == "Administrador (Escritório)":
             st.info("Nenhum dado de chapa.")
     elif senha_digitada:
         st.sidebar.error("Senha Incorreta")
-        # ==============================================================================
-# TELA 3: SUPER ADMIN (MANUTENÇÃO DE BANCO)
+
+# ==============================================================================
+# TELA 3: SUPER ADMIN (TI)
 # ==============================================================================
 elif modo_acesso == "Super Admin (TI)":
-    st.title("🛠️ Super Admin: Manutenção do Banco")
+    st.title("🛠️ Super Admin (TI)")
     st.markdown("---")
     
-    # SENHA MESTRA
     SENHA_MESTRA = "Workaround&97146605"
     senha_digitada = st.sidebar.text_input("Senha Mestra", type="password")
     
     if senha_digitada == SENHA_MESTRA:
         st.sidebar.success("Acesso ROOT Liberado")
         
-        # --- SEÇÃO 1: RESETAR LOTES ---
         st.subheader("1. Resetar Sequência de Lotes")
-        st.warning("⚠️ PERIGO: Isso fará a contagem voltar para BRASA00001 para TODOS os materiais.")
+        st.warning("⚠️ Isso apagará TODOS os lotes e reiniciará a contagem em BRASA00001.")
         
-        col_reset_1, col_reset_2 = st.columns([3, 1])
-        if col_reset_2.button("💣 RESETAR TUDO (Lotes)", type="primary"):
-            # Conecta no banco correto baseado no nome do arquivo (ajuste dinâmico)
-            nome_banco = 'dados_chapas.db' if 'Chapas' in st.title else 'dados_fabrica_v5.db'
-            # (NOTA: Se estiver no app.py antigo, o banco é dados_fabrica_v5.db. Se for chapas, dados_chapas.db)
-            # Para facilitar, vou fazer uma verificação simples:
-            if "Chapas" in st.title: # Detecta se é o app de chapas pelo título da página
-                banco_alvo = 'dados_chapas.db'
-            else:
-                banco_alvo = 'dados_fabrica_v5.db'
-                
+        col1, col2 = st.columns([3,1])
+        if col2.button("💣 ZERAR BANCO DE DADOS", type="primary"):
             try:
-                conn = sqlite3.connect(banco_alvo)
+                conn = sqlite3.connect('dados_chapas.db')
                 c = conn.cursor()
-                # Apaga a tabela de produção E a tabela de sequência
                 c.execute("DELETE FROM producao")
                 c.execute("DELETE FROM sequencia_lotes")
                 conn.commit()
                 conn.close()
-                st.success(f"Banco {banco_alvo} ZERADO! Próximo lote será BRASA00001.")
+                st.success("Banco Zerado! Reinicie a página.")
                 st.balloons()
             except Exception as e:
-                st.error(f"Erro ao resetar: {e}")
-
-        # --- SEÇÃO 2: SQL DIRETO (PARA VOCÊ FAZER O QUE QUISER) ---
+                st.error(f"Erro: {e}")
+        
         st.markdown("---")
-        st.subheader("2. Executar Comando SQL (Avançado)")
-        st.info("Exemplos: `DELETE FROM producao WHERE id = 5` ou `UPDATE sequencia_lotes SET ultimo_numero = 10 WHERE cod_sap = 11000...`")
-        
-        comando_sql = st.text_area("Comando SQL:")
-        if st.button("Executar SQL"):
-            if "Chapas" in st.title:
-                banco_alvo = 'dados_chapas.db'
-            else:
-                banco_alvo = 'dados_fabrica_v5.db'
-                
-            try:
-                conn = sqlite3.connect(banco_alvo)
-                c = conn.cursor()
-                c.execute(comando_sql)
-                conn.commit()
-                st.success("Comando executado com sucesso!")
-                
-                # Se for SELECT, mostra o resultado
-                if comando_sql.strip().upper().startswith("SELECT"):
-                    resultado = c.fetchall()
-                    st.write(resultado)
-                    
-                conn.close()
-            except Exception as e:
-                st.error(f"Erro SQL: {e}")
-
-        # --- SEÇÃO 3: VISUALIZAR TABELAS ---
-        st.markdown("---")
-        st.subheader("3. Visualizar Tabelas Brutas")
-        
-        if "Chapas" in st.title:
-            banco_alvo = 'dados_chapas.db'
-        else:
-            banco_alvo = 'dados_fabrica_v5.db'
-            
-        conn = sqlite3.connect(banco_alvo)
-        
-        st.write("### Tabela: Sequência de Lotes (Onde o sistema guarda o último número)")
-        df_seq = pd.read_sql_query("SELECT * FROM sequencia_lotes", conn)
-        st.dataframe(df_seq)
-        
-        st.write("### Tabela: Produção (Dados bipados)")
-        df_prod = pd.read_sql_query("SELECT * FROM producao", conn)
-        st.dataframe(df_prod)
-        
-        conn.close()
-
+        st.subheader("2. Visualizar Tabelas Brutas")
+        try:
+            conn = sqlite3.connect('dados_chapas.db')
+            st.write("Produção:")
+            st.dataframe(pd.read_sql_query("SELECT * FROM producao", conn))
+            st.write("Sequência:")
+            st.dataframe(pd.read_sql_query("SELECT * FROM sequencia_lotes", conn))
+            conn.close()
+        except: st.error("Erro ao ler banco.")
     elif senha_digitada:
-        st.error("Acesso Negado.")
+        st.error("Acesso Negado")
