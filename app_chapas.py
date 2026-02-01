@@ -70,17 +70,14 @@ def obter_e_incrementar_lote(cod_sap, apenas_visualizar=False):
     c = conn.cursor()
     c.execute("SELECT ultimo_numero FROM sequencia_lotes WHERE cod_sap = ?", (cod_sap,))
     resultado = c.fetchone()
-    
     if resultado:
         ultimo = resultado[0]
         proximo = ultimo + 1
     else:
         ultimo = 0
         proximo = 1
-    
     prefixo = "BRASA"
     lote_formatado = f"{prefixo}{proximo:05d}"
-    
     if not apenas_visualizar:
         c.execute('''
             INSERT INTO sequencia_lotes (cod_sap, ultimo_numero) 
@@ -150,52 +147,45 @@ def formatar_br(valor):
     except: return str(valor)
 
 def regra_multiplos_300_baixo(mm):
-    """Regra 300mm para BAIXO"""
     try:
         valor = int(float(mm))
         return (valor // 300) * 300
     except: return 0
 
-# --- CARREGAMENTO DO ARQUIVO ---
 @st.cache_data
 def carregar_base_sap():
-    # Tenta carregar base_sap.xlsx
-    pasta_script = os.path.dirname(os.path.abspath(__file__))
-    caminho_fixo = os.path.join(pasta_script, "base_sap.xlsx")
-    
-    # Verifica caminho relativo e absoluto
-    if os.path.exists("base_sap.xlsx"):
-        caminho_final = "base_sap.xlsx"
-    elif os.path.exists(caminho_fixo):
-        caminho_final = caminho_fixo
-    else:
-        return None
-
     try:
-        df = pd.read_excel(caminho_final)
+        if os.path.exists("base_sap.xlsx"):
+            df = pd.read_excel("base_sap.xlsx")
+        else:
+            pasta_script = os.path.dirname(os.path.abspath(__file__))
+            caminho_fixo = os.path.join(pasta_script, "base_sap.xlsx")
+            if os.path.exists(caminho_fixo):
+                df = pd.read_excel(caminho_fixo)
+            else: return None
+        
         df.columns = df.columns.str.strip()
         df['Produto'] = pd.to_numeric(df['Produto'], errors='coerce').fillna(0).astype(int)
         if df['Peso por Metro'].dtype == 'object':
                 df['Peso por Metro'] = df['Peso por Metro'].str.replace(',', '.').astype(float)
         return df
-    except: 
-        return None
+    except: return None
 
 # --- 3. CONTROLE DE ACESSO ---
 st.sidebar.title("🔐 Acesso Chapas")
-modo_acesso = st.sidebar.radio("Selecione o Perfil:", ["Operador (Chão de Fábrica)", "Administrador (Escritório)", "Super Admin (TI)"])
+modo_acesso = st.sidebar.radio("Selecione o Perfil:", 
+    ["Operador (Chão de Fábrica)", "Administrador (Escritório)", "Super Admin (TI)"])
 
 df_sap = carregar_base_sap()
+if df_sap is None:
+    st.error("ERRO CRÍTICO: `base_sap.xlsx` não encontrado.")
 
 # ==============================================================================
 # TELA 1: OPERADOR (Tablet)
 # ==============================================================================
 if modo_acesso == "Operador (Chão de Fábrica)":
     st.title("🏭 Chapas: Bipagem")
-    
-    if df_sap is None:
-        st.error("🚨 O arquivo `base_sap.xlsx` não foi encontrado!")
-    else:
+    if df_sap is not None:
         if 'wizard_data' not in st.session_state: st.session_state.wizard_data = {}
         if 'wizard_step' not in st.session_state: st.session_state.wizard_step = 0
         if 'item_id' not in st.session_state: st.session_state.item_id = 0 
@@ -206,8 +196,6 @@ if modo_acesso == "Operador (Chão de Fábrica)":
             st.write(f"**Item:** {st.session_state.wizard_data.get('Cód. SAP')} - {st.session_state.wizard_data.get('Descrição')}")
             st.info(f"🏷️ Próximo Lote: **{st.session_state.proximo_lote_visual}**")
             st.markdown("---")
-            
-            # PASSO 1
             if st.session_state.wizard_step == 1:
                 with st.form("form_reserva"):
                     reserva = st.text_input("1. Nº da Reserva:", key=f"res_{st.session_state.item_id}")
@@ -217,10 +205,7 @@ if modo_acesso == "Operador (Chão de Fábrica)":
                             st.session_state.wizard_data['Reserva'] = reserva
                             st.session_state.wizard_step = 2
                             st.rerun()
-                        else:
-                            st.error("⚠️ Digite a Reserva!")
-
-            # PASSO 2
+                        else: st.error("⚠️ Digite a Reserva!")
             elif st.session_state.wizard_step == 2:
                 with st.form("form_qtd"):
                     qtd = st.number_input("2. Quantidade (Peças):", min_value=1, step=1, value=1, key=f"qtd_{st.session_state.item_id}")
@@ -229,8 +214,6 @@ if modo_acesso == "Operador (Chão de Fábrica)":
                         st.session_state.wizard_data['Qtd'] = qtd
                         st.session_state.wizard_step = 3
                         st.rerun()
-
-            # PASSO 3
             elif st.session_state.wizard_step == 3:
                 with st.form("form_peso"):
                     peso = st.number_input("3. Peso Real Balança (kg):", min_value=0.000, step=0.001, format="%.3f", key=f"peso_{st.session_state.item_id}")
@@ -240,10 +223,7 @@ if modo_acesso == "Operador (Chão de Fábrica)":
                             st.session_state.wizard_data['Peso Balança (kg)'] = peso
                             st.session_state.wizard_step = 4
                             st.rerun()
-                        else:
-                            st.error("⚠️ Peso não pode ser Zero!")
-
-            # PASSO 4
+                        else: st.error("⚠️ Peso não pode ser Zero!")
             elif st.session_state.wizard_step == 4:
                 with st.form("form_largura"):
                     largura = st.number_input("4. Largura Real (mm):", min_value=0, step=1, key=f"larg_{st.session_state.item_id}")
@@ -256,10 +236,7 @@ if modo_acesso == "Operador (Chão de Fábrica)":
                             st.session_state.wizard_data['Largura Real (mm)'] = largura
                             st.session_state.wizard_step = 5
                             st.rerun()
-                        else:
-                            st.error("⚠️ Largura não pode ser Zero!")
-
-            # PASSO 5
+                        else: st.error("⚠️ Largura não pode ser Zero!")
             elif st.session_state.wizard_step == 5:
                 with st.form("form_comp"):
                     comp = st.number_input("5. Comprimento Real (mm):", min_value=0, step=1, key=f"comp_{st.session_state.item_id}")
@@ -267,7 +244,6 @@ if modo_acesso == "Operador (Chão de Fábrica)":
                     if comp > 0:
                         st.caption(f"Regra 300mm: {comp}mm -> **{comp_multiplo}mm** (Arred. p/ Baixo)")
                     st.write("")
-                    
                     if st.form_submit_button("✅ SALVAR E FINALIZAR", use_container_width=True, type="primary"):
                         if comp > 0:
                             fator_sap = st.session_state.wizard_data['Fator SAP']
@@ -275,16 +251,12 @@ if modo_acesso == "Operador (Chão de Fábrica)":
                             peso_balanca_f = st.session_state.wizard_data['Peso Balança (kg)']
                             largura_real = st.session_state.wizard_data['Largura Real (mm)']
                             tamanho_real = comp
-                            
                             largura_corte = regra_multiplos_300_baixo(largura_real)
                             tamanho_corte = regra_multiplos_300_baixo(tamanho_real)
-                            
                             larg_metros = largura_corte / 1000.0
                             comp_metros = tamanho_corte / 1000.0
-                            
                             peso_teorico = fator_sap * larg_metros * comp_metros * qtd_f
                             sucata = peso_balanca_f - peso_teorico
-                            
                             item_temp = {
                                 "Reserva": st.session_state.wizard_data['Reserva'],
                                 "Cód. SAP": st.session_state.wizard_data['Cód. SAP'],
@@ -298,16 +270,13 @@ if modo_acesso == "Operador (Chão de Fábrica)":
                                 "Peso Teórico": peso_teorico,
                                 "Sucata": sucata
                             }
-                            
                             lote_gerado = salvar_no_banco(item_temp)
                             st.toast(f"Chapa Salva! Lote: {lote_gerado}", icon="🏗️")
-                            
                             st.session_state.wizard_data = {}
                             st.session_state.wizard_step = 0
                             st.session_state.input_scanner = ""
                             st.rerun()
-                        else:
-                            st.error("⚠️ Comprimento não pode ser Zero!")
+                        else: st.error("⚠️ Comprimento não pode ser Zero!")
 
         def iniciar_bipagem():
             codigo = st.session_state.input_scanner
@@ -320,7 +289,6 @@ if modo_acesso == "Operador (Chão de Fábrica)":
                         st.session_state.item_id += 1 
                         prev = obter_e_incrementar_lote(cod_int, apenas_visualizar=True)
                         st.session_state.proximo_lote_visual = prev
-                        
                         st.session_state.wizard_data = {
                             "Cód. SAP": cod_int,
                             "Descrição": produto.iloc[0]['Descrição do produto'],
@@ -330,12 +298,9 @@ if modo_acesso == "Operador (Chão de Fábrica)":
                     else:
                         st.toast("Material não encontrado!", icon="🚫")
                         st.session_state.input_scanner = ""
-                except:
-                    st.session_state.input_scanner = ""
+                except: st.session_state.input_scanner = ""
 
-        if st.session_state.wizard_step > 0:
-            wizard_item()
-
+        if st.session_state.wizard_step > 0: wizard_item()
         st.text_input("BIPAR CÓDIGO CHAPA:", key="input_scanner", on_change=iniciar_bipagem)
         st.info("ℹ️ Sistema Chapas: Regra 300mm (Para Baixo).")
 
@@ -344,20 +309,12 @@ if modo_acesso == "Operador (Chão de Fábrica)":
 # ==============================================================================
 elif modo_acesso == "Administrador (Escritório)":
     st.title("💻 Admin: Controle de Chapas")
-    
     SENHA_CORRETA = "Br@met4lChapas"
-
     senha_digitada = st.sidebar.text_input("Senha Admin", type="password")
     
-    if df_sap is None:
-        st.sidebar.warning("⚠️ Base SAP desconectada.")
-
     if senha_digitada == SENHA_CORRETA:
         st.sidebar.success("Acesso Chapas Liberado")
-        
-        if st.button("🔄 Atualizar Tabela"):
-            st.rerun()
-            
+        if st.button("🔄 Atualizar Tabela"): st.rerun()
         df_banco = ler_banco()
         
         if not df_banco.empty:
@@ -367,8 +324,6 @@ elif modo_acesso == "Administrador (Escritório)":
             c3.metric("Sucata Total", formatar_br(df_banco['sucata'].sum()) + " kg")
             
             st.markdown("### Conferência")
-            
-            # Tabela Editável
             df_editado = st.data_editor(
                 df_banco,
                 use_container_width=True,
@@ -389,15 +344,12 @@ elif modo_acesso == "Administrador (Escritório)":
                 },
                 key="editor_admin"
             )
-            
             if st.button("💾 Salvar Alterações de Status"):
                 atualizar_status_lote(df_editado)
                 st.success("Status atualizados!")
                 st.rerun()
             
-            # --- EXPORTAÇÃO CORRIGIDA ---
             lista_exportacao = []
-
             for index, row in df_banco.iterrows():
                 linha_original = {
                     'Lote': row['lote'],
@@ -413,7 +365,6 @@ elif modo_acesso == "Administrador (Escritório)":
                     'Comp. Consid.': row['tamanho_corte_mm']
                 }
                 lista_exportacao.append(linha_original)
-
                 if row['sucata'] > 0.001:
                     linha_virtual = {
                         'Lote': "VIRTUAL",
@@ -441,20 +392,17 @@ elif modo_acesso == "Administrador (Escritório)":
             
             st.markdown("---")
             st.download_button("📥 Baixar Excel Chapas", buffer.getvalue(), "Relatorio_Chapas.xlsx", type="primary")
-            
             if st.button("🗑️ Limpar Banco Chapas", type="secondary"):
                 limpar_banco()
                 st.rerun()
-        else:
-            st.info("Nenhum dado de chapa.")
-    elif senha_digitada:
-        st.sidebar.error("Senha Incorreta")
+        else: st.info("Nenhum dado de chapa.")
+    elif senha_digitada: st.sidebar.error("Senha Incorreta")
 
 # ==============================================================================
-# TELA 3: SUPER ADMIN (TI)
+# TELA 3: SUPER ADMIN (TI) - MANUTENÇÃO
 # ==============================================================================
 elif modo_acesso == "Super Admin (TI)":
-    st.title("🛠️ Super Admin (TI)")
+    st.title("🛠️ Super Admin (TI): Manutenção")
     st.markdown("---")
     
     SENHA_MESTRA = "Workaround&97146605"
@@ -463,11 +411,10 @@ elif modo_acesso == "Super Admin (TI)":
     if senha_digitada == SENHA_MESTRA:
         st.sidebar.success("Acesso ROOT Liberado")
         
-        st.subheader("1. Resetar Sequência de Lotes")
-        st.warning("⚠️ Isso apagará TODOS os lotes e reiniciará a contagem em BRASA00001.")
-        
-        col1, col2 = st.columns([3,1])
-        if col2.button("💣 ZERAR BANCO DE DADOS", type="primary"):
+        # 1. ZERAR TUDO
+        st.subheader("1. Reset Geral (Perigo)")
+        st.warning("⚠️ Esta ação apaga todos os registros e reinicia os lotes para BRASA00001.")
+        if st.button("💣 ZERAR BANCO DE DADOS COMPLETO", type="primary"):
             try:
                 conn = sqlite3.connect('dados_chapas.db')
                 c = conn.cursor()
@@ -475,20 +422,53 @@ elif modo_acesso == "Super Admin (TI)":
                 c.execute("DELETE FROM sequencia_lotes")
                 conn.commit()
                 conn.close()
-                st.success("Banco Zerado! Reinicie a página.")
-                st.balloons()
-            except Exception as e:
-                st.error(f"Erro: {e}")
-        
+                st.success("Banco limpo com sucesso! Contagem reiniciada.")
+            except Exception as e: st.error(f"Erro: {e}")
+
         st.markdown("---")
-        st.subheader("2. Visualizar Tabelas Brutas")
-        try:
-            conn = sqlite3.connect('dados_chapas.db')
-            st.write("Produção:")
-            st.dataframe(pd.read_sql_query("SELECT * FROM producao", conn))
-            st.write("Sequência:")
-            st.dataframe(pd.read_sql_query("SELECT * FROM sequencia_lotes", conn))
-            conn.close()
-        except: st.error("Erro ao ler banco.")
+        
+        # 2. MANUTENÇÃO SIMPLES (EXCLUSÃO POR ID)
+        st.subheader("2. Manutenção de Registros")
+        
+        conn = sqlite3.connect('dados_chapas.db')
+        df_prod = pd.read_sql_query("SELECT * FROM producao", conn)
+        conn.close()
+        
+        st.write("Visualização da Tabela (Use o ID para excluir):")
+        st.dataframe(df_prod, use_container_width=True)
+        
+        c1, c2 = st.columns([1, 2])
+        id_para_excluir = c1.number_input("Digitar ID para Excluir:", min_value=0, step=1)
+        if c2.button("🗑️ Excluir Linha Específica"):
+            if id_para_excluir > 0:
+                try:
+                    conn = sqlite3.connect('dados_chapas.db')
+                    c = conn.cursor()
+                    c.execute("DELETE FROM producao WHERE id = ?", (id_para_excluir,))
+                    conn.commit()
+                    conn.close()
+                    st.success(f"Registro ID {id_para_excluir} excluído.")
+                    st.rerun()
+                except Exception as e: st.error(f"Erro: {e}")
+            else:
+                st.warning("Digite um ID válido.")
+
+        st.markdown("---")
+        
+        # 3. SQL AVANÇADO
+        st.subheader("3. SQL Avançado")
+        comando_sql = st.text_area("Executar comando SQL:")
+        if st.button("Executar SQL"):
+            try:
+                conn = sqlite3.connect('dados_chapas.db')
+                c = conn.cursor()
+                c.execute(comando_sql)
+                conn.commit()
+                st.success("Comando executado.")
+                if comando_sql.strip().upper().startswith("SELECT"):
+                    st.write(c.fetchall())
+                conn.close()
+            except Exception as e: st.error(f"Erro SQL: {e}")
+
     elif senha_digitada:
         st.error("Acesso Negado")
