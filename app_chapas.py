@@ -70,17 +70,14 @@ def obter_e_incrementar_lote(cod_sap, apenas_visualizar=False):
     c = conn.cursor()
     c.execute("SELECT ultimo_numero FROM sequencia_lotes WHERE cod_sap = ?", (cod_sap,))
     resultado = c.fetchone()
-    
     if resultado:
         ultimo = resultado[0]
         proximo = ultimo + 1
     else:
         ultimo = 0
         proximo = 1
-    
     prefixo = "BRASA"
     lote_formatado = f"{prefixo}{proximo:05d}"
-    
     if not apenas_visualizar:
         c.execute('''
             INSERT INTO sequencia_lotes (cod_sap, ultimo_numero) 
@@ -156,35 +153,52 @@ def regra_multiplos_300_baixo(mm):
         return (valor // 300) * 300
     except: return 0
 
-# --- CARREGAMENTO SIMPLIFICADO (SEM CACHE PARA EVITAR ERROS) ---
-def carregar_base_sap():
-    # Procura na mesma pasta do script (Caminho Relativo)
-    try:
-        if os.path.exists("base_sap.xlsx"):
-            df = pd.read_excel("base_sap.xlsx")
-        else:
-            # Tenta caminho absoluto por garantia
-            pasta_script = os.path.dirname(os.path.abspath(__file__))
-            caminho_fixo = os.path.join(pasta_script, "base_sap.xlsx")
-            if os.path.exists(caminho_fixo):
-                df = pd.read_excel(caminho_fixo)
-            else:
-                return None
-        
-        # Processamento básico
-        df.columns = df.columns.str.strip()
-        df['Produto'] = pd.to_numeric(df['Produto'], errors='coerce').fillna(0).astype(int)
-        if df['Peso por Metro'].dtype == 'object':
-                df['Peso por Metro'] = df['Peso por Metro'].str.replace(',', '.').astype(float)
-        return df
-    except: 
-        return None
+# --- CARREGAMENTO FLEXÍVEL (PROCURA O ARQUIVO MESMO COM NOME ERRADO) ---
+# Esta função não usa cache para forçar a busca real
+def encontrar_e_carregar_base():
+    # 1. Lista todos os arquivos da pasta atual
+    pasta_atual = os.path.dirname(os.path.abspath(__file__))
+    arquivos = os.listdir(pasta_atual)
+    
+    # Debug: Mostra para o Admin o que tem na pasta (Oculto para operador, visível na sidebar se precisar)
+    # st.sidebar.write(f"Arquivos na pasta: {arquivos}") 
+    
+    nome_alvo = "base_sap.xlsx"
+    arquivo_correto = None
+    
+    # 2. Procura insensível a maiúsculas/minúsculas
+    for f in arquivos:
+        if f.lower() == nome_alvo.lower():
+            arquivo_correto = os.path.join(pasta_atual, f)
+            break
+            
+    if arquivo_correto:
+        try:
+            df = pd.read_excel(arquivo_correto)
+            # Processamento
+            df.columns = df.columns.str.strip()
+            df['Produto'] = pd.to_numeric(df['Produto'], errors='coerce').fillna(0).astype(int)
+            if df['Peso por Metro'].dtype == 'object':
+                 df['Peso por Metro'] = df['Peso por Metro'].str.replace(',', '.').astype(float)
+            return df, arquivo_correto
+        except Exception as e:
+            return None, f"Erro ao ler: {str(e)}"
+    else:
+        return None, "Arquivo não encontrado na lista."
 
 # --- 3. CONTROLE DE ACESSO ---
 st.sidebar.title("🔐 Acesso Chapas")
 modo_acesso = st.sidebar.radio("Selecione o Perfil:", ["Operador (Chão de Fábrica)", "Administrador (Escritório)"])
 
-df_sap = carregar_base_sap()
+# Tenta carregar
+df_sap, msg_erro = encontrar_e_carregar_base()
+
+# DIAGNÓSTICO NA SIDEBAR (Só aparece se der erro)
+if df_sap is None:
+    st.sidebar.error("❌ ERRO DE ARQUIVO")
+    st.sidebar.write(f"Msg: {msg_erro}")
+    st.sidebar.write("📂 Arquivos visíveis no sistema:")
+    st.sidebar.code("\n".join(os.listdir(os.path.dirname(os.path.abspath(__file__)))))
 
 # ==============================================================================
 # TELA 1: OPERADOR (Tablet)
@@ -193,8 +207,8 @@ if modo_acesso == "Operador (Chão de Fábrica)":
     st.title("🏭 Chapas: Bipagem")
     
     if df_sap is None:
-        st.error("🚨 O arquivo `base_sap.xlsx` não foi encontrado!")
-        st.warning("Verifique se o arquivo está na pasta raiz do projeto.")
+        st.error("🚨 Base de dados não carregada.")
+        st.info("O sistema listou os arquivos na barra lateral esquerda. Verifique se o nome está correto.")
     else:
         # Lógica Normal do Operador
         if 'wizard_data' not in st.session_state: st.session_state.wizard_data = {}
@@ -350,9 +364,8 @@ elif modo_acesso == "Administrador (Escritório)":
 
     senha_digitada = st.sidebar.text_input("Senha Admin", type="password")
     
-    # Se o arquivo não carregar, avisa aqui mas DEIXA O RESTO FUNCIONAR (Limpeza de banco, etc)
     if df_sap is None:
-        st.sidebar.warning("⚠️ Base SAP desconectada.")
+        st.sidebar.warning("⚠️ Base SAP desconectada. Verifique os arquivos.")
 
     if senha_digitada == SENHA_CORRETA:
         st.sidebar.success("Acesso Chapas Liberado")
