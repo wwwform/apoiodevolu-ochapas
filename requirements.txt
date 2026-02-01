@@ -1,7 +1,5 @@
 streamlit
 pandas
-google-generativeai
 openpyxl
-Pillow
-gspread
+gspread==5.10.0
 oauth2client
