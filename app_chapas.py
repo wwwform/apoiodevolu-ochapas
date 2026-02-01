@@ -4,6 +4,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
 import time
+import os
 
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="Sistema Chapas", layout="wide")
@@ -41,38 +42,67 @@ st.markdown("""
 # --- CONEXÃO GOOGLE SHEETS ---
 @st.cache_resource
 def conectar_google():
-    scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["gcp_service_account"], scope)
-    client = gspread.authorize(creds)
-    return client.open("BD_Fabrica_Geral")
+    try:
+        scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["gcp_service_account"], scope)
+        client = gspread.authorize(creds)
+        return client.open("BD_Fabrica_Geral")
+    except Exception as e:
+        return None
 
 def garantir_cabecalhos():
+    sh = conectar_google()
+    if sh is None:
+        st.error("Erro fatal: Falha na conexão com Google Sheets.")
+        return
     try:
-        sh = conectar_google()
-        # Aba Produção
-        ws_prod = sh.worksheet("Chapas_Producao")
+        try: ws_prod = sh.worksheet("Chapas_Producao")
+        except: ws_prod = sh.add_worksheet(title="Chapas_Producao", rows=1000, cols=20)
         if not ws_prod.row_values(1):
-            ws_prod.append_row([
-                "id", "data_hora", "lote", "reserva", "status_reserva", 
-                "cod_sap", "descricao", "qtd", "peso_real", 
-                "largura_real_mm", "largura_corte_mm", "tamanho_real_mm", "tamanho_corte_mm", "peso_teorico", "sucata"
-            ])
-        # Aba Lotes
-        ws_lotes = sh.worksheet("Chapas_Lotes")
+            ws_prod.append_row(["id", "data_hora", "lote", "reserva", "status_reserva", "cod_sap", "descricao", "qtd", "peso_real", "largura_real_mm", "largura_corte_mm", "tamanho_real_mm", "tamanho_corte_mm", "peso_teorico", "sucata"])
+        
+        try: ws_lotes = sh.worksheet("Chapas_Lotes")
+        except: ws_lotes = sh.add_worksheet(title="Chapas_Lotes", rows=1000, cols=5)
         if not ws_lotes.row_values(1):
             ws_lotes.append_row(["cod_sap", "ultimo_numero"])
-    except Exception as e:
-        st.error(f"Erro ao iniciar planilha: {e}")
+    except Exception as e: st.error(f"Erro ao configurar abas: {e}")
 
 garantir_cabecalhos()
 
-# --- FUNÇÕES DE BANCO ---
+# --- RASTREADOR DE ARQUIVO (SÓ PARA CHAPAS) ---
+@st.cache_data
+def carregar_base_sap():
+    # 1. Caminho Direto
+    if os.path.exists("base_sap.xlsx"): return ler_excel("base_sap.xlsx")
+    
+    # 2. Caminho Absoluto
+    pasta_script = os.path.dirname(os.path.abspath(__file__))
+    caminho_fixo = os.path.join(pasta_script, "base_sap.xlsx")
+    if os.path.exists(caminho_fixo): return ler_excel(caminho_fixo)
+    
+    # 3. Varredura
+    for arquivo in os.listdir(pasta_script):
+        if arquivo.lower() == "base_sap.xlsx":
+            return ler_excel(os.path.join(pasta_script, arquivo))
+    
+    return None
+
+def ler_excel(caminho):
+    try:
+        df = pd.read_excel(caminho)
+        df.columns = df.columns.str.strip()
+        df['Produto'] = pd.to_numeric(df['Produto'], errors='coerce').fillna(0).astype(int)
+        if df['Peso por Metro'].dtype == 'object':
+                df['Peso por Metro'] = df['Peso por Metro'].str.replace(',', '.').astype(float)
+        return df
+    except: return None
+
+# --- FUNÇÕES ---
 def ler_banco():
     sh = conectar_google()
     ws = sh.worksheet("Chapas_Producao")
     dados = ws.get_all_records()
     df = pd.DataFrame(dados)
-    # Garante numéricos
     cols_num = ['id', 'cod_sap', 'qtd', 'peso_real', 'largura_real_mm', 'largura_corte_mm', 'tamanho_real_mm', 'tamanho_corte_mm', 'peso_teorico', 'sucata']
     for c in cols_num:
         if c in df.columns:
@@ -82,41 +112,27 @@ def ler_banco():
 def obter_e_incrementar_lote(cod_sap):
     sh = conectar_google()
     ws = sh.worksheet("Chapas_Lotes")
-    cell = ws.find(str(cod_sap))
-    
-    if cell:
+    try:
+        cell = ws.find(str(cod_sap))
         ultimo = int(ws.cell(cell.row, 2).value)
         proximo = ultimo + 1
         ws.update_cell(cell.row, 2, proximo)
-    else:
+    except:
         proximo = 1
         ws.append_row([cod_sap, proximo])
-        
-    prefixo = "BRASA"
-    return f"{prefixo}{proximo:05d}"
+    return f"BRASA{proximo:05d}"
 
 def salvar_no_banco(dados):
     sh = conectar_google()
     ws = sh.worksheet("Chapas_Producao")
     lote_oficial = obter_e_incrementar_lote(dados['Cód. SAP'])
     novo_id = int(datetime.now().timestamp() * 1000)
-    
     linha = [
-        novo_id,
-        datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
-        lote_oficial,
-        dados['Reserva'],
-        "Pendente",
-        int(dados['Cód. SAP']),
-        dados['Descrição'],
-        int(dados['Qtd']),
-        float(dados['Peso Balança (kg)']),
-        int(dados['Largura Real (mm)']),
-        int(dados['Largura Corte (mm)']),
-        int(dados['Tamanho Real (mm)']),
-        int(dados['Tamanho Corte (mm)']),
-        float(dados['Peso Teórico']),
-        float(dados['Sucata'])
+        novo_id, datetime.now().strftime("%d/%m/%Y %H:%M:%S"), lote_oficial,
+        dados['Reserva'], "Pendente", int(dados['Cód. SAP']), dados['Descrição'],
+        int(dados['Qtd']), float(dados['Peso Balança (kg)']), int(dados['Largura Real (mm)']),
+        int(dados['Largura Corte (mm)']), int(dados['Tamanho Real (mm)']),
+        int(dados['Tamanho Corte (mm)']), float(dados['Peso Teórico']), float(dados['Sucata'])
     ]
     ws.append_row(linha)
     return lote_oficial
@@ -145,22 +161,21 @@ def limpar_banco_completo():
 def excluir_linha_por_id(id_alvo):
     sh = conectar_google()
     ws = sh.worksheet("Chapas_Producao")
-    cell = ws.find(str(id_alvo))
-    if cell:
+    try:
+        cell = ws.find(str(id_alvo))
         ws.delete_rows(cell.row)
         return True
-    return False
+    except: return False
 
 def ajustar_contador_lote(cod_sap, novo_valor):
     sh = conectar_google()
     ws = sh.worksheet("Chapas_Lotes")
-    cell = ws.find(str(cod_sap))
-    if cell:
+    try:
+        cell = ws.find(str(cod_sap))
         ws.update_cell(cell.row, 2, novo_valor)
-    else:
+    except:
         ws.append_row([cod_sap, novo_valor])
 
-# --- AUXILIARES ---
 def formatar_br(valor):
     try:
         if pd.isna(valor) or valor == "": return "0,000"
@@ -169,28 +184,8 @@ def formatar_br(valor):
     except: return str(valor)
 
 def regra_multiplos_300_baixo(mm):
-    try:
-        valor = int(float(mm))
-        return (valor // 300) * 300
+    try: return (int(float(mm)) // 300) * 300
     except: return 0
-
-@st.cache_data
-def carregar_base_sap():
-    try:
-        if os.path.exists("base_sap.xlsx"):
-            df = pd.read_excel("base_sap.xlsx")
-        else:
-            pasta_script = os.path.dirname(os.path.abspath(__file__))
-            caminho_fixo = os.path.join(pasta_script, "base_sap.xlsx")
-            if os.path.exists(caminho_fixo):
-                df = pd.read_excel(caminho_fixo)
-            else: return None
-        df.columns = df.columns.str.strip()
-        df['Produto'] = pd.to_numeric(df['Produto'], errors='coerce').fillna(0).astype(int)
-        if df['Peso por Metro'].dtype == 'object':
-                df['Peso por Metro'] = df['Peso por Metro'].str.replace(',', '.').astype(float)
-        return df
-    except: return None
 
 # --- CONTROLE DE ACESSO ---
 st.sidebar.title("🔐 Acesso Chapas")
@@ -199,16 +194,14 @@ modo_acesso = st.sidebar.radio("Selecione o Perfil:", ["Operador (Chão de Fábr
 df_sap = carregar_base_sap()
 if df_sap is None: st.error("ERRO: `base_sap.xlsx` não encontrado.")
 
-# ==============================================================================
-# TELA 1: OPERADOR
-# ==============================================================================
+# ================= TELA 1: OPERADOR =================
 if modo_acesso == "Operador (Chão de Fábrica)":
     st.title("🏭 Chapas: Bipagem")
     if df_sap is not None:
         if 'wizard_data' not in st.session_state: st.session_state.wizard_data = {}
         if 'wizard_step' not in st.session_state: st.session_state.wizard_step = 0
         if 'item_id' not in st.session_state: st.session_state.item_id = 0 
-        
+
         @st.dialog("📦 Entrada de Chapas")
         def wizard_item():
             st.write(f"**Item:** {st.session_state.wizard_data.get('Cód. SAP')} - {st.session_state.wizard_data.get('Descrição')}")
@@ -318,9 +311,7 @@ if modo_acesso == "Operador (Chão de Fábrica)":
         if st.session_state.wizard_step > 0: wizard_item()
         st.text_input("BIPAR CÓDIGO CHAPA:", key="input_scanner", on_change=iniciar_bipagem)
 
-# ==============================================================================
-# TELA 2: ADMINISTRADOR
-# ==============================================================================
+# ================= TELA 2: ADMIN =================
 elif modo_acesso == "Administrador (Escritório)":
     st.title("💻 Admin: Controle de Chapas (Google Cloud)")
     SENHA_CORRETA = "Br@met4lChapas"
@@ -328,22 +319,20 @@ elif modo_acesso == "Administrador (Escritório)":
     
     if senha_digitada == SENHA_CORRETA:
         st.sidebar.success("Acesso Chapas Liberado")
-        try:
-            df_banco = ler_banco()
+        try: df_banco = ler_banco()
         except:
-            st.error("Erro de conexão com Google Sheets.")
+            st.error("Erro no Google Sheets.")
             df_banco = pd.DataFrame()
         
         if not df_banco.empty:
-            tab1, tab2 = st.tabs(["📋 Tabela & Edição", "📊 Dashboard KPIs"])
-            
+            tab1, tab2 = st.tabs(["📋 Tabela", "📊 KPIs"])
             with tab1:
-                if st.button("🔄 Atualizar Tabela (Nuvem)"): st.rerun()
+                if st.button("🔄 Atualizar"): st.rerun()
                 c1, c2, c3 = st.columns(3)
                 c1.metric("Itens", len(df_banco))
                 c2.metric("Peso Total", formatar_br(df_banco['peso_real'].sum()) + " kg")
                 c3.metric("Sucata Total", formatar_br(df_banco['sucata'].sum()) + " kg")
-                st.markdown("### Conferência")
+                
                 df_editado = st.data_editor(
                     df_banco,
                     use_container_width=True,
@@ -364,122 +353,92 @@ elif modo_acesso == "Administrador (Escritório)":
                     },
                     key="editor_admin"
                 )
-                if st.button("💾 Salvar Status na Nuvem"):
-                    with st.spinner("Atualizando planilha..."):
-                        atualizar_status_lote(df_editado)
-                    st.success("Salvo com sucesso!")
+                if st.button("💾 Salvar Status"):
+                    with st.spinner("Atualizando..."): atualizar_status_lote(df_editado)
+                    st.success("Salvo!")
                     st.rerun()
                 
                 lista_exportacao = []
                 for index, row in df_banco.iterrows():
                     linha_original = {
-                        'Lote': row['lote'],
-                        'Reserva': row['reserva'],
-                        'SAP': row['cod_sap'],
-                        'Descrição': row['descricao'],
-                        'Peso Lançamento (kg)': formatar_br(row['peso_teorico']), 
-                        'Status': row['status_reserva'],
-                        'Qtd': row['qtd'],
-                        'Largura Real': row['largura_real_mm'],
-                        'Largura Consid.': row['largura_corte_mm'],
-                        'Comp. Real': row['tamanho_real_mm'],
-                        'Comp. Consid.': row['tamanho_corte_mm']
+                        'Lote': row['lote'], 'Reserva': row['reserva'], 'SAP': row['cod_sap'],
+                        'Descrição': row['descricao'], 'Peso Lançamento (kg)': formatar_br(row['peso_teorico']), 
+                        'Status': row['status_reserva'], 'Qtd': row['qtd'],
+                        'Largura Real': row['largura_real_mm'], 'Largura Consid.': row['largura_corte_mm'],
+                        'Comp. Real': row['tamanho_real_mm'], 'Comp. Consid.': row['tamanho_corte_mm']
                     }
                     lista_exportacao.append(linha_original)
                     if row['sucata'] > 0.001:
                         linha_virtual = {
-                            'Lote': "VIRTUAL",
-                            'Reserva': row['reserva'],
-                            'SAP': row['cod_sap'],
-                            'Descrição': f"SUCATA - {row['descricao']}",
-                            'Peso Lançamento (kg)': formatar_br(row['sucata']), 
-                            'Status': row['status_reserva'],
-                            'Qtd': 1,
-                            'Largura Real': 0,
-                            'Largura Consid.': 0,
-                            'Comp. Real': 0,
-                            'Comp. Consid.': 0
+                            'Lote': "VIRTUAL", 'Reserva': row['reserva'], 'SAP': row['cod_sap'],
+                            'Descrição': f"SUCATA - {row['descricao']}", 'Peso Lançamento (kg)': formatar_br(row['sucata']), 
+                            'Status': row['status_reserva'], 'Qtd': 1,
+                            'Largura Real': 0, 'Largura Consid.': 0,
+                            'Comp. Real': 0, 'Comp. Consid.': 0
                         }
                         lista_exportacao.append(linha_virtual)
 
                 df_export_final = pd.DataFrame(lista_exportacao)
                 if not df_export_final.empty:
-                    cols_order = ['Lote', 'Reserva', 'SAP', 'Descrição', 'Peso Lançamento (kg)', 'Status', 'Qtd', 'Largura Real', 'Largura Consid.', 'Comp. Real', 'Comp. Consid.']
-                    cols_final = [c for c in cols_order if c in df_export_final.columns]
+                    cols_final = [c for c in ['Lote', 'Reserva', 'SAP', 'Descrição', 'Peso Lançamento (kg)', 'Status', 'Qtd', 'Largura Real', 'Largura Consid.', 'Comp. Real', 'Comp. Consid.'] if c in df_export_final.columns]
                     df_export_final = df_export_final[cols_final]
                     buffer = io.BytesIO()
                     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                         df_export_final.to_excel(writer, index=False)
                     st.markdown("---")
-                    st.download_button("📥 Baixar Excel Chapas", buffer.getvalue(), "Relatorio_Chapas.xlsx", type="primary")
+                    st.download_button("📥 Baixar Excel", buffer.getvalue(), "Relatorio_Chapas.xlsx", type="primary")
             
             with tab2:
-                st.subheader("📊 Indicadores de Performance (KPIs)")
+                st.subheader("KPIs")
                 peso_total = df_banco['peso_real'].sum()
                 sucata_total = df_banco['sucata'].sum()
                 if peso_total > 0: pct_sucata = (sucata_total / peso_total) * 100
                 else: pct_sucata = 0
-                kpi1, kpi2, kpi3 = st.columns(3)
-                kpi1.metric("Produção Total", f"{peso_total:,.2f} kg".replace(",", "X").replace(".", ",").replace("X", "."))
-                kpi2.metric("Total de Sucata", f"{sucata_total:,.2f} kg".replace(",", "X").replace(".", ",").replace("X", "."), delta_color="inverse")
-                kpi3.metric("Índice de Sucata %", f"{pct_sucata:.2f}%", delta=f"{pct_sucata:.2f}%", delta_color="inverse")
-                st.markdown("---")
-                st.write("### 🏆 Top Materiais Produzidos")
-                df_chart = df_banco.groupby("descricao")[["peso_real"]].sum().sort_values("peso_real", ascending=False).head(10)
-                st.bar_chart(df_chart)
-        else: st.info("Nenhum dado na nuvem.")
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Produção", f"{peso_total:,.2f} kg")
+                c2.metric("Sucata", f"{sucata_total:,.2f} kg")
+                c3.metric("Índice Sucata", f"{pct_sucata:.2f}%")
+                st.write("### Top Materiais")
+                st.bar_chart(df_banco.groupby("descricao")[["peso_real"]].sum().sort_values("peso_real", ascending=False).head(10))
+        else: st.info("Sem dados.")
     elif senha_digitada: st.sidebar.error("Senha Incorreta")
 
-# ==============================================================================
-# TELA 3: SUPER ADMIN
-# ==============================================================================
+# ================= TELA 3: SUPER ADMIN =================
 elif modo_acesso == "Super Admin":
-    st.title("🛠️ Super Admin (Google Cloud)")
+    st.title("🛠️ Super Admin")
     SENHA_MESTRA = "Workaround&97146605"
     senha_digitada = st.sidebar.text_input("Senha Mestra", type="password")
     
     if senha_digitada == SENHA_MESTRA:
-        st.sidebar.success("Acesso ROOT Liberado")
+        st.success("ROOT Liberado")
         
-        st.subheader("1. Reset Geral (Perigo)")
-        st.warning("⚠️ Apaga TODAS as linhas de 'Chapas_Producao' e 'Chapas_Lotes'.")
+        st.warning("⚠️ Apaga TODAS as linhas da planilha 'Chapas_Producao' e 'Chapas_Lotes'.")
         if st.button("💣 ZERAR PLANILHA COMPLETA", type="primary"):
-            with st.spinner("Limpando Google Sheets..."):
-                limpar_banco_completo()
-            st.success("Planilhas limpas com sucesso!")
+            with st.spinner("Limpando..."): limpar_banco_completo()
+            st.success("Limpo!")
         
         st.markdown("---")
-        st.subheader("2. Ajustar Contador de Lotes")
-        
+        st.subheader("Ajustar Lotes")
         sh = conectar_google()
         ws_lotes = sh.worksheet("Chapas_Lotes")
-        dados_lotes = ws_lotes.get_all_records()
-        df_lotes = pd.DataFrame(dados_lotes)
-        st.dataframe(df_lotes)
-        
+        st.dataframe(pd.DataFrame(ws_lotes.get_all_records()))
         c1, c2, c3 = st.columns(3)
         cod_sap_alvo = c1.number_input("Cód. SAP:", step=1, format="%d")
         novo_valor = c2.number_input("Novo Valor:", min_value=0, step=1)
-        if c3.button("Atualizar Lote"):
+        if c3.button("Atualizar"):
             ajustar_contador_lote(cod_sap_alvo, novo_valor)
             st.success("Atualizado!")
             st.rerun()
             
         st.markdown("---")
-        st.subheader("3. Excluir Linha por ID")
-        
+        st.subheader("Excluir por ID")
         df_prod = ler_banco()
         st.dataframe(df_prod)
-        
         c_del1, c_del2 = st.columns([1,2])
         id_del = c_del1.number_input("ID para excluir:", step=1, format="%d")
         if c_del2.button("🗑️ Excluir"):
             if id_del > 0:
-                with st.spinner("Deletando da nuvem..."):
-                    sucesso = excluir_linha_por_id(id_del)
-                if sucesso: 
-                    st.success("Excluído!")
-                    st.rerun()
-                else: st.error("ID não encontrado.")
-    
+                with st.spinner("Deletando..."):
+                    if excluir_linha_por_id(id_del): st.success("Excluído!"); st.rerun()
+                    else: st.error("ID não encontrado.")
     elif senha_digitada: st.error("Acesso Negado")
