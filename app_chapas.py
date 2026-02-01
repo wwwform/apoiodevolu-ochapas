@@ -174,7 +174,7 @@ def carregar_base_sap():
 # --- 3. CONTROLE DE ACESSO ---
 st.sidebar.title("🔐 Acesso Chapas")
 modo_acesso = st.sidebar.radio("Selecione o Perfil:", 
-    ["Operador (Chão de Fábrica)", "Administrador (Escritório)", "Super Admin"])
+    ["Operador (Chão de Fábrica)", "Administrador (Escritório)", "Super Admin (TI)"])
 
 df_sap = carregar_base_sap()
 if df_sap is None:
@@ -401,8 +401,8 @@ elif modo_acesso == "Administrador (Escritório)":
 # ==============================================================================
 # TELA 3: SUPER ADMIN (TI) - MANUTENÇÃO
 # ==============================================================================
-elif modo_acesso == "Super Admin ":
-    st.title("🛠️ Super Admin : Manutenção")
+elif modo_acesso == "Super Admin (TI)":
+    st.title("🛠️ Super Admin (TI): Manutenção")
     st.markdown("---")
     
     SENHA_MESTRA = "Workaround&97146605"
