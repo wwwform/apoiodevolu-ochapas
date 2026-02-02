@@ -84,11 +84,6 @@ def limpar_numero_sap(valor):
     except: return 0.0
 
 def formatar_br(v):
-    # CRÍTICO: "70,650"
-    try: return f"{float(v):.3f}".replace(".", ",")
-    except: return "0,000"
-
-def formatar_tela(v):
     try: return f"{float(v):,.3f}".replace(",", "X").replace(".", ",").replace("X", ".")
     except: return "0,000"
 
@@ -178,7 +173,7 @@ if perfil == "Operador (Chão de Fábrica)":
                 peso_teorico_prev = fator * (lc/1000.0) * (tc/1000.0) * q
                 
                 if comp > 0:
-                    st.info(f"📏 Corte: {lc}x{tc}mm | ⚖️ Calc: **{formatar_tela(peso_teorico_prev)} kg**")
+                    st.info(f"📏 Corte: {lc}x{tc}mm | ⚖️ Calc: **{formatar_br(peso_teorico_prev)} kg**")
                 
                 if st.button("✅ SALVAR E FINALIZAR", type="primary"):
                     if comp > 0:
@@ -254,8 +249,8 @@ elif perfil == "Administrador (Escritório)":
                     if st.button("Atualizar"): st.rerun()
                     c1,c2,c3 = st.columns(3)
                     c1.metric("Itens", len(df))
-                    c2.metric("Total", formatar_tela(df['peso_real'].sum()))
-                    c3.metric("Sucata", formatar_tela(df['sucata'].sum()))
+                    c2.metric("Total", formatar_br(df['peso_real'].sum()))
+                    c3.metric("Sucata", formatar_br(df['sucata'].sum()))
                     
                     df_show = st.data_editor(df, key="ed_chapas", use_container_width=True, column_config={
                         "id": st.column_config.NumberColumn(disabled=True),
@@ -274,22 +269,46 @@ elif perfil == "Administrador (Escritório)":
                     lst = []
                     for _, r in df.iterrows():
                         lst.append({
-                            'Lote':r['lote'], 'Reserva':r['reserva'], 'SAP':r['cod_sap'], 
-                            'Descrição':r['descricao'], 'Status':r['status_reserva'], 'Qtd':int(r['qtd']), 
-                            'Peso Lançamento (kg)': formatar_br(r['peso_teorico']), 
-                            'Largura Real':int(r['largura_real_mm']), 'Largura Consid.':int(r['largura_corte_mm']), 
-                            'Comp. Real':int(r['tamanho_real_mm']), 'Comp. Consid.':int(r['tamanho_corte_mm'])
+                            'Lote': r['lote'],
+                            'Reserva': r['reserva'],
+                            'SAP': r['cod_sap'],
+                            'Descrição': r['descricao'],
+                            'Status': r['status_reserva'],
+                            'Qtd': int(r['qtd']),
+                            'Peso Lançamento (kg)': float(r['peso_teorico']), # FLOAT
+                            'Largura Real': int(r['largura_real_mm']),
+                            'Largura Consid.': int(r['largura_corte_mm']),
+                            'Comp. Real': int(r['tamanho_real_mm']),
+                            'Comp. Consid.': int(r['tamanho_corte_mm'])
                         })
                         if r['sucata'] > 0.001:
                             lst.append({
-                                'Lote':'VIRTUAL', 'Reserva':r['reserva'], 'SAP':r['cod_sap'], 
-                                'Descrição':f"SUCATA - {r['descricao']}", 'Status':r['status_reserva'], 
-                                'Qtd':1, 'Peso Lançamento (kg)': formatar_br(r['sucata']),
-                                'Largura Real':0, 'Largura Consid.':0, 'Comp. Real':0, 'Comp. Consid.':0
+                                'Lote': 'VIRTUAL',
+                                'Reserva': r['reserva'],
+                                'SAP': r['cod_sap'],
+                                'Descrição': f"SUCATA - {r['descricao']}",
+                                'Status': r['status_reserva'],
+                                'Qtd': 1,
+                                'Peso Lançamento (kg)': float(r['sucata']), # FLOAT
+                                'Largura Real': 0,
+                                'Largura Consid.': 0,
+                                'Comp. Real': 0,
+                                'Comp. Consid.': 0
                             })
                     
+                    df_export = pd.DataFrame(lst)
                     b = io.BytesIO()
-                    with pd.ExcelWriter(b, engine='openpyxl') as w: pd.DataFrame(lst).to_excel(w, index=False)
+                    with pd.ExcelWriter(b, engine='openpyxl') as w:
+                        df_export.to_excel(w, index=False, sheet_name='Relatorio')
+                        worksheet = w.sheets['Relatorio']
+                        
+                        try:
+                            idx_peso = df_export.columns.get_loc('Peso Lançamento (kg)') + 1
+                            for row in range(2, worksheet.max_row + 1):
+                                cell = worksheet.cell(row=row, column=idx_peso)
+                                cell.number_format = '0.000' # MÁSCARA 0.000
+                        except: pass
+
                     st.download_button("Baixar Excel", b.getvalue(), "Relatorio_Chapas.xlsx", "primary")
 
             with t2:
