@@ -12,14 +12,20 @@ st.markdown("""<style>header{display:none;} .stDeployButton{display:none;} butto
 
 @st.cache_resource
 def get_db():
-    key_dict = json.loads(json.dumps(st.secrets["firebase"]))
+    key_dict = dict(st.secrets["firebase"]) # Correção do erro de JSON
     creds = service_account.Credentials.from_service_account_info(key_dict)
     return firestore.Client(credentials=creds, project=key_dict["project_id"])
 
 def get_proximo_lote(db, cod_sap):
     doc_ref = db.collection('controles').document('lotes_chapas')
     doc = doc_ref.get()
-    dados = doc.to_dict() if doc.exists else {}
+    
+    if not doc.exists:
+        doc_ref.set({})
+        dados = {}
+    else:
+        dados = doc.to_dict()
+        
     sap_str = str(cod_sap)
     novo = dados.get(sap_str, 0) + 1
     doc_ref.set({sap_str: novo}, merge=True)
@@ -55,12 +61,14 @@ def carregar_base_sap():
         col_peso = next((c for c in df.columns if 'PESO' in c and 'METRO' in c), None)
         if col_prod and col_peso:
             df['PRODUTO'] = pd.to_numeric(df[col_prod], errors='coerce').fillna(0).astype(int)
-            def cv(x):
+            def normalizar_peso(x):
                 if pd.isna(x): return 0.0
-                s = str(x).strip().replace('.','').replace(',','.')
+                s = str(x).strip()
+                if '.' in s and ',' in s: s = s.replace('.', '')
+                s = s.replace(',', '.')
                 try: return float(s)
                 except: return 0.0
-            df['PESO_FATOR'] = df[col_peso].apply(cv)
+            df['PESO_FATOR'] = df[col_peso].apply(normalizar_peso)
             return df
         return None
     except: return None
@@ -78,15 +86,16 @@ if perfil == "Operador":
         @st.dialog("📦 Entrada")
         def wizard():
             st.write(f"**Item:** {st.session_state.wizard_data.get('Cód. SAP')}")
-            fator_real = st.number_input("Fator SAP (kg/m²):", value=float(st.session_state.wizard_data.get('PESO_FATOR', 0.0)), format="%.4f")
-            st.markdown("---")
+            # Fator oculto, sem edição
+            fator_oculto = float(st.session_state.wizard_data.get('PESO_FATOR', 0.0))
             
+            st.markdown("---")
             if st.session_state.wizard_step == 1:
                 with st.form("f1"):
                     res = st.text_input("1. Reserva:", key="w_res")
                     if st.form_submit_button("PRÓXIMO"):
                         if res.strip():
-                            st.session_state.wizard_data.update({'reserva':res, 'PESO_FATOR':fator_real})
+                            st.session_state.wizard_data.update({'reserva':res, 'PESO_FATOR':fator_oculto})
                             st.session_state.wizard_step = 2
                             st.rerun()
                         else: st.error("Obrigatório")
@@ -113,17 +122,21 @@ if perfil == "Operador":
                         st.rerun()
             elif st.session_state.wizard_step == 5:
                 comp = st.number_input("5. Comp. Real (mm):", min_value=0)
+                
                 fator = st.session_state.wizard_data['PESO_FATOR']
                 q = st.session_state.wizard_data['qtd']
                 larg_real = st.session_state.wizard_data['largura']
                 lc = regra_300(larg_real)
                 tc = regra_300(comp)
+                
+                # Fator (kg/m2) * larg(m) * comp(m) * qtd
                 pt = fator * (lc/1000.0) * (tc/1000.0) * q
                 
                 if comp > 0: st.info(f"Calc: **{formatar_br(pt)} kg**")
                 
                 if st.button("✅ SALVAR"):
                     if comp > 0:
+                        suc = float(st.session_state.wizard_data['peso_real']) - pt
                         dados = {
                             'cod_sap': int(st.session_state.wizard_data['Cód. SAP']),
                             'descricao': st.session_state.wizard_data['Descrição'],
@@ -135,14 +148,17 @@ if perfil == "Operador":
                             'tamanho_real_mm': int(comp),
                             'tamanho_corte_mm': int(tc),
                             'peso_teorico': float(pt),
-                            'sucata': float(st.session_state.wizard_data['peso_real'] - pt)
+                            'sucata': float(suc)
                         }
-                        lote = salvar(dados)
-                        st.toast(f"Salvo: {lote}")
-                        st.session_state.wizard_step = 0
-                        st.session_state.input_scanner = ""
-                        time.sleep(1)
-                        st.rerun()
+                        try:
+                            lote = salvar(dados)
+                            st.toast(f"Salvo: {lote}")
+                            st.session_state.wizard_step = 0
+                            st.session_state.input_scanner = ""
+                            time.sleep(1)
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Erro: {e}")
                     else: st.error("Inválido")
 
         def check():
@@ -198,13 +214,14 @@ elif perfil == "Administrador":
             with pd.ExcelWriter(b, engine='openpyxl') as w:
                 df_export = df_show.drop(columns=['id_doc', 'timestamp'], errors='ignore')
                 df_export.to_excel(w, index=False, sheet_name='Relatorio')
+                
                 ws = w.sheets['Relatorio']
-                try:
-                    cols_idx = [i+1 for i, c in enumerate(df_export.columns) if 'peso' in c.lower() or 'sucata' in c.lower()]
-                    for r in range(2, ws.max_row + 1):
-                        for c in cols_idx: ws.cell(row=r, column=c).number_format = '#,##0.000'
-                except: pass
-            st.download_button("Baixar Excel", b.getvalue(), "Relatorio.xlsx", "primary")
+                cols_formatar = [i+1 for i, c in enumerate(df_export.columns) if 'peso' in c.lower() or 'sucata' in c.lower()]
+                for r in range(2, ws.max_row + 1):
+                    for c in cols_formatar:
+                        ws.cell(row=r, column=c).number_format = '#,##0.000'
+                        
+            st.download_button("Baixar Excel", b.getvalue(), "Relatorio_Chapas.xlsx", "primary")
         else: st.info("Vazio")
     else: st.error("Senha incorreta")
 
@@ -220,8 +237,11 @@ elif perfil == "Super Admin":
         st.write("---")
         doc = db.collection('controles').document('lotes_chapas').get()
         if doc.exists:
-            sap = st.number_input("SAP", step=1)
-            val = st.number_input("Valor", step=1)
-            if st.button("Atualizar"):
-                db.collection('controles').document('lotes_chapas').update({str(sap): val})
+            data = doc.to_dict()
+            st.write(data)
+            c1, c2 = st.columns(2)
+            sap = c1.number_input("SAP", step=1)
+            val = c2.number_input("Valor", step=1)
+            if c2.button("Atualizar"):
+                db.collection('controles').document('lotes_chapas').set({str(sap): val}, merge=True)
                 st.success("Feito")
