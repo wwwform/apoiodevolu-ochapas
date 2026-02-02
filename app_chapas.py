@@ -70,13 +70,18 @@ def normalizar_numero_br(v):
     if pd.isna(v): return 0.0
     if isinstance(v, (int, float)): return float(v)
     s = str(v).strip()
-    if not s: return 0.0
     if ',' in s: s = s.replace('.', '').replace(',', '.')
     try: return float(s)
     except: return 0.0
 
 def limpar_numero_sap(valor):
-    return normalizar_numero_br(valor)
+    if pd.isna(valor): return 0.0
+    if isinstance(valor, (int, float)): return float(valor)
+    s = str(valor).strip()
+    if '.' in s and ',' in s: s = s.replace('.', '')
+    s = s.replace(',', '.')
+    try: return float(s)
+    except: return 0.0
 
 def formatar_br(v):
     try: return f"{float(v):,.3f}".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -235,7 +240,6 @@ elif perfil == "Administrador (Escritório)":
             df = pd.DataFrame(ws.get_all_records())
             
             if not df.empty:
-                # CORREÇÃO CRÍTICA NA LEITURA DO SHEETS
                 for c in ['peso_real', 'sucata', 'peso_teorico', 'qtd']:
                     if c in df.columns: 
                         df[c] = df[c].apply(normalizar_numero_br)
@@ -262,34 +266,22 @@ elif perfil == "Administrador (Escritório)":
                         st.success("Salvo!")
                         st.rerun()
                     
+                    # --- EXPORTAÇÃO EXCEL (TEXTO COM VÍRGULA) ---
                     lst = []
                     for _, r in df.iterrows():
                         lst.append({
-                            'Lote': r['lote'],
-                            'Reserva': r['reserva'],
-                            'SAP': r['cod_sap'],
-                            'Descrição': r['descricao'],
-                            'Status': r['status_reserva'],
-                            'Qtd': int(r['qtd']),
-                            'Peso Lançamento (kg)': float(r['peso_teorico']),
-                            'Largura Real': int(r['largura_real_mm']),
-                            'Largura Consid.': int(r['largura_corte_mm']),
-                            'Comp. Real': int(r['tamanho_real_mm']),
-                            'Comp. Consid.': int(r['tamanho_corte_mm'])
+                            'Lote':r['lote'], 'Reserva':r['reserva'], 'SAP':r['cod_sap'], 
+                            'Descrição':r['descricao'], 'Status':r['status_reserva'], 'Qtd':r['qtd'], 
+                            'Peso Lançamento (kg)': formatar_br(r['peso_teorico']), # STRING FORMATADA
+                            'Largura Real':r['largura_real_mm'], 'Largura Consid.':r['largura_corte_mm'], 
+                            'Comp. Real':r['tamanho_real_mm'], 'Comp. Consid.':r['tamanho_corte_mm']
                         })
                         if r['sucata'] > 0.001:
                             lst.append({
-                                'Lote': 'VIRTUAL',
-                                'Reserva': r['reserva'],
-                                'SAP': r['cod_sap'],
-                                'Descrição': f"SUCATA - {r['descricao']}",
-                                'Status': r['status_reserva'],
-                                'Qtd': 1,
-                                'Peso Lançamento (kg)': float(r['sucata']),
-                                'Largura Real': 0,
-                                'Largura Consid.': 0,
-                                'Comp. Real': 0,
-                                'Comp. Consid.': 0
+                                'Lote':'VIRTUAL', 'Reserva':r['reserva'], 'SAP':r['cod_sap'], 
+                                'Descrição':f"SUCATA - {r['descricao']}", 'Status':r['status_reserva'], 
+                                'Qtd':1, 'Peso Lançamento (kg)': formatar_br(r['sucata']), # STRING FORMATADA
+                                'Largura Real':0, 'Largura Consid.':0, 'Comp. Real':0, 'Comp. Consid.':0
                             })
                     
                     b = io.BytesIO()
@@ -308,11 +300,40 @@ elif perfil == "Administrador (Escritório)":
 elif perfil == "Super Admin":
     st.title("🛠️ Super Admin")
     if st.sidebar.text_input("Senha Mestra", type="password") == "Workaround&97146605":
+        sh = conectar_google()
+        
+        st.subheader("1. Reset Geral")
         if st.button("💣 ZERAR TUDO", type="primary"):
-            sh = conectar_google()
             sh.worksheet("Chapas_Producao").clear()
             sh.worksheet("Chapas_Producao").append_row(["id","data_hora","lote","reserva","status_reserva","cod_sap","descricao","qtd","peso_real","largura_real_mm","largura_corte_mm","tamanho_real_mm","tamanho_corte_mm","peso_teorico","sucata"])
             sh.worksheet("Chapas_Lotes").clear()
             sh.worksheet("Chapas_Lotes").append_row(["cod_sap","ultimo_numero"])
             st.success("Limpo!")
+            
+        st.markdown("---")
+        st.subheader("2. Ajustar Lotes")
+        ws_l = sh.worksheet("Chapas_Lotes")
+        df_l = pd.DataFrame(ws_l.get_all_records())
+        st.dataframe(df_l)
+        c1, c2, c3 = st.columns(3)
+        sap = c1.number_input("SAP:", step=1)
+        novo = c2.number_input("Novo Valor:", step=1)
+        if c3.button("Atualizar"):
+            try:
+                cell = ws_l.find(str(sap))
+                ws_l.update_cell(cell.row, 2, novo)
+                st.success("Feito")
+            except: st.error("SAP não encontrado")
+            
+        st.markdown("---")
+        st.subheader("3. Excluir ID")
+        idd = st.number_input("ID para excluir:", step=1)
+        if st.button("Excluir Linha"):
+            ws_p = sh.worksheet("Chapas_Producao")
+            try:
+                cell = ws_p.find(str(idd))
+                ws_p.delete_rows(cell.row)
+                st.success("Apagado")
+            except: st.error("ID não existe")
+            
     else: st.error("Negado")
