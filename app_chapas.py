@@ -66,8 +66,19 @@ def garantir_cabecalhos():
 garantir_cabecalhos()
 
 # --- FUNÇÕES ---
+def limpar_numero(v):
+    if pd.isna(v): return 0.0
+    s = str(v).strip().replace('.','').replace(',','.')
+    try: return float(s)
+    except: return 0.0
+
 def formatar_br(v):
     try: return f"{float(v):,.3f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    except: return "0,000"
+
+def formatar_excel(v):
+    # Exportação (70,650)
+    try: return f"{float(v):.3f}".replace(".", ",")
     except: return "0,000"
 
 def regra_300(mm):
@@ -82,7 +93,6 @@ def carregar_base_sap():
         for f in os.listdir(pasta):
             if f.lower() == "base_sap.xlsx": path = os.path.join(pasta, f); break
     if not os.path.exists(path): return None
-    
     try:
         df = pd.read_excel(path, dtype=str)
         df.columns = df.columns.str.strip().str.upper()
@@ -160,6 +170,7 @@ if perfil == "Operador (Chão de Fábrica)":
                 larg_real = st.session_state.wizard_data['Largura Real (mm)']
                 lc = regra_300(larg_real)
                 tc = regra_300(comp)
+                
                 peso_teorico_prev = fator * (lc/1000.0) * (tc/1000.0) * q
                 
                 if comp > 0:
@@ -255,14 +266,12 @@ elif perfil == "Administrador (Escritório)":
                         st.success("Salvo!")
                         st.rerun()
                     
-                    # --- EXPORTAÇÃO EXCEL CORRIGIDA ---
                     lst = []
                     for _, r in df.iterrows():
-                        # AQUI: float() puro para exportar
                         lst.append({
                             'Lote':r['lote'], 'Reserva':r['reserva'], 'SAP':r['cod_sap'], 
                             'Descrição':r['descricao'], 'Status':r['status_reserva'], 'Qtd':r['qtd'], 
-                            'Peso Lançamento (kg)': float(r['peso_teorico']), # <--- NÚMERO
+                            'Peso Lançamento (kg)': formatar_excel(r['peso_teorico']), # <--- VÍRGULA
                             'Largura Real':r['largura_real_mm'], 'Largura Consid.':r['largura_corte_mm'], 
                             'Comp. Real':r['tamanho_real_mm'], 'Comp. Consid.':r['tamanho_corte_mm']
                         })
@@ -270,7 +279,7 @@ elif perfil == "Administrador (Escritório)":
                             lst.append({
                                 'Lote':'VIRTUAL', 'Reserva':r['reserva'], 'SAP':r['cod_sap'], 
                                 'Descrição':f"SUCATA - {r['descricao']}", 'Status':r['status_reserva'], 
-                                'Qtd':1, 'Peso Lançamento (kg)': float(r['sucata']), # <--- NÚMERO
+                                'Qtd':1, 'Peso Lançamento (kg)': formatar_excel(r['sucata']), # <--- VÍRGULA
                                 'Largura Real':0, 'Largura Consid.':0, 'Comp. Real':0, 'Comp. Consid.':0
                             })
                     
