@@ -84,16 +84,8 @@ def limpar_numero_sap(valor):
     except: return 0.0
 
 def formatar_br(v):
-    """
-    Formata número para padrão BR SEM separador de milhar,
-    garantindo que o Excel não interprete errado.
-    Ex: 70.65 -> 70,65
-    """
-    try:
-        return f"{float(v):.2f}".replace(".", ",")
-    except:
-        return "0,00"
-
+    try: return f"{float(v):,.3f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    except: return "0,000"
 
 def regra_300(mm):
     try: return (int(float(mm)) // 300) * 300
@@ -274,42 +266,50 @@ elif perfil == "Administrador (Escritório)":
                         st.success("Salvo!")
                         st.rerun()
                     
-                    # --- EXPORTAÇÃO EXCEL (NUMÉRICO CORRETO) ---
-lst = []
-for _, r in df.iterrows():
-    lst.append({
-        'Lote': r['lote'],
-        'Reserva': r['reserva'],
-        'SAP': r['cod_sap'],
-        'Descrição': r['descricao'],
-        'Status': r['status_reserva'],
-        'Qtd': int(r['qtd']),
-        'Peso Lançamento (kg)': round(float(r['peso_teorico']), 2),
-        'Largura Real': int(r['largura_real_mm']),
-        'Largura Consid.': int(r['largura_corte_mm']),
-        'Comp. Real': int(r['tamanho_real_mm']),
-        'Comp. Consid.': int(r['tamanho_corte_mm'])
-    })
+                    # === EXPORTAÇÃO EXCEL CORRETA ===
+                    lst = []
+                    for _, r in df.iterrows():
+                        lst.append({
+                            'Lote': r['lote'],
+                            'Reserva': r['reserva'],
+                            'SAP': r['cod_sap'],
+                            'Descrição': r['descricao'],
+                            'Status': r['status_reserva'],
+                            'Qtd': int(r['qtd']),
+                            'Peso Lançamento (kg)': float(r['peso_teorico']),
+                            'Largura Real': int(r['largura_real_mm']),
+                            'Largura Consid.': int(r['largura_corte_mm']),
+                            'Comp. Real': int(r['tamanho_real_mm']),
+                            'Comp. Consid.': int(r['tamanho_corte_mm'])
+                        })
+                        if r['sucata'] > 0.001:
+                            lst.append({
+                                'Lote': 'VIRTUAL',
+                                'Reserva': r['reserva'],
+                                'SAP': r['cod_sap'],
+                                'Descrição': f"SUCATA - {r['descricao']}",
+                                'Status': r['status_reserva'],
+                                'Qtd': 1,
+                                'Peso Lançamento (kg)': float(r['sucata']),
+                                'Largura Real': 0,
+                                'Largura Consid.': 0,
+                                'Comp. Real': 0,
+                                'Comp. Consid.': 0
+                            })
+                    
+                    df_export = pd.DataFrame(lst)
+                    b = io.BytesIO()
+                    with pd.ExcelWriter(b, engine='openpyxl') as w:
+                        df_export.to_excel(w, index=False, sheet_name='Relatorio')
+                        worksheet = w.sheets['Relatorio']
+                        try:
+                            idx_peso = df_export.columns.get_loc('Peso Lançamento (kg)') + 1
+                            for row in range(2, worksheet.max_row + 1):
+                                # AQUI: Aplica o formato #,##0.000 direto na célula do Excel
+                                worksheet.cell(row=row, column=idx_peso).number_format = '#,##0.000'
+                        except: pass
 
-    if r['sucata'] > 0.001:
-        lst.append({
-            'Lote': 'VIRTUAL',
-            'Reserva': r['reserva'],
-            'SAP': r['cod_sap'],
-            'Descrição': f"SUCATA - {r['descricao']}",
-            'Status': r['status_reserva'],
-            'Qtd': 1,
-            'Peso Lançamento (kg)': round(float(r['sucata']), 2),
-            'Largura Real': 0,
-            'Largura Consid.': 0,
-            'Comp. Real': 0,
-            'Comp. Consid.': 0
-        })
-
-b = io.BytesIO()
-with pd.ExcelWriter(b, engine='openpyxl') as w:
-    pd.DataFrame(lst).to_excel(w, index=False)
-
+                    st.download_button("Baixar Excel", b.getvalue(), "Relatorio_Chapas.xlsx", "primary")
 
             with t2:
                 pt = df['peso_real'].sum()
