@@ -31,18 +31,28 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- CONEXÃO GOOGLE ---
+# --- CONEXÃO GOOGLE RETRY ---
 @st.cache_resource
-def conectar_google():
+def get_gspread_client():
     try:
         scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
         creds = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["gcp_service_account"], scope)
-        client = gspread.authorize(creds)
-        return client.open("BD_Fabrica_Geral")
+        return gspread.authorize(creds)
     except: return None
 
+def conectar_google_retry(tentativas=3):
+    client = get_gspread_client()
+    if not client: return None
+    for i in range(tentativas):
+        try:
+            return client.open("BD_Fabrica_Geral")
+        except:
+            time.sleep(1)
+            if i == tentativas - 1: return None
+    return None
+
 def garantir_cabecalhos():
-    sh = conectar_google()
+    sh = conectar_google_retry()
     if not sh: return
     try:
         try: ws = sh.worksheet("Chapas_Producao")
@@ -61,9 +71,9 @@ def normalizar_numero_br(v):
     if pd.isna(v): return 0.0
     if isinstance(v, (int, float)): return float(v)
     s = str(v).strip()
+    if not s: return 0.0
     if ',' in s: s = s.replace('.', '').replace(',', '.')
-    try: return float(s)
-    except: return 0.0
+    return float(s)
 
 def formatar_br(v):
     try: return f"{float(v):,.3f}".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -73,44 +83,28 @@ def regra_300(mm):
     try: return (int(float(mm)) // 300) * 300
     except: return 0
 
-# CACHE DE LEITURA (SOLUÇÃO ERRO API)
-@st.cache_data(ttl=60)
-def obter_dados_chapas():
-    sh = conectar_google()
-    if not sh: return pd.DataFrame()
-    try:
-        ws = sh.worksheet("Chapas_Producao")
-        df = pd.DataFrame(ws.get_all_records())
-        return df
-    except: return pd.DataFrame()
-
-# --- APP ---
-st.sidebar.title("🔐 Acesso")
-perfil = st.sidebar.radio("Perfil:", ["Operador (Chão de Fábrica)", "Administrador (Escritório)", "Super Admin"])
-
 @st.cache_data
 def carregar_base_sap():
     path = "base_sap.xlsx"
     if not os.path.exists(path): return None
     try:
-        df = pd.read_excel(path)
+        # LER COMO STRING PARA NÃO PERDER A VÍRGULA
+        df = pd.read_excel(path, dtype=str)
         df.columns = df.columns.str.strip().str.upper()
         col_prod = next((c for c in df.columns if 'PRODUTO' in c), None)
         col_peso = next((c for c in df.columns if 'PESO' in c and 'METRO' in c), None)
         if col_prod and col_peso:
             df['PRODUTO'] = pd.to_numeric(df[col_prod], errors='coerce').fillna(0).astype(int)
-            def lp(x):
-                if pd.isna(x): return 0.0
-                if isinstance(x, (int,float)): return float(x)
-                s = str(x).strip().replace('.','').replace(',','.')
-                try: return float(s)
-                except: return 0.0
-            df['PESO_FATOR'] = df[col_peso].apply(lp)
+            df['PESO_FATOR'] = df[col_peso].apply(normalizar_numero_br)
             return df
         return None
     except: return None
 
 df_sap = carregar_base_sap()
+
+# --- APP ---
+st.sidebar.title("🔐 Acesso Restrito")
+perfil = st.sidebar.radio("Perfil:", ["Operador (Chão de Fábrica)", "Administrador (Escritório)", "Super Admin"])
 
 if perfil == "Operador (Chão de Fábrica)":
     st.title("🏭 Chapas: Bipagem")
@@ -157,7 +151,6 @@ if perfil == "Operador (Chão de Fábrica)":
                         st.rerun()
             elif st.session_state.wizard_step == 5:
                 comp = st.number_input("5. Comp. Real (mm):", min_value=0)
-                
                 fator = st.session_state.wizard_data['PESO_FATOR']
                 q = st.session_state.wizard_data['Qtd']
                 larg_real = st.session_state.wizard_data['Largura Real (mm)']
@@ -170,7 +163,10 @@ if perfil == "Operador (Chão de Fábrica)":
                 if st.button("✅ SALVAR"):
                     if comp > 0:
                         with st.spinner("Salvando..."):
-                            sh = conectar_google()
+                            sh = conectar_google_retry()
+                            if not sh:
+                                st.error("Erro conexão")
+                                return
                             ws_p = sh.worksheet("Chapas_Producao")
                             ws_l = sh.worksheet("Chapas_Lotes")
                             
@@ -223,141 +219,113 @@ if perfil == "Operador (Chão de Fábrica)":
         if st.session_state.wizard_step > 0: wizard()
         st.text_input("BIPAR:", key="input_scanner", on_change=check_scan)
 
-# === ADMIN (SUBSTITUA APENAS ESTE BLOCO) ===
 elif perfil == "Administrador (Escritório)":
     st.title("💻 Admin")
     if st.sidebar.text_input("Senha", type="password") == "Br@met4lChapas":
-        if st.button("🔄 Atualizar"):
-            obter_dados_chapas.clear()
-            st.rerun()
+        sh = conectar_google_retry()
+        if sh:
+            ws = sh.worksheet("Chapas_Producao")
+            df = pd.DataFrame(ws.get_all_records())
             
-        df = obter_dados_chapas()
-        
-        if not df.empty:
-            # 1. Normalização rigorosa das colunas numéricas
-            for c in ['peso_real', 'sucata', 'peso_teorico', 'qtd']:
-                if c in df.columns:
-                    df[c] = df[c].apply(normalizar_numero_br)
-            
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Itens", len(df))
-            c2.metric("Total", formatar_br(df['peso_real'].sum()))
-            c3.metric("Sucata", formatar_br(df['sucata'].sum()))
-            
-            df_show = st.data_editor(df, key="ed", use_container_width=True, column_config={
-                "id": st.column_config.NumberColumn(disabled=True),
-                "status_reserva": st.column_config.SelectboxColumn("Status", options=["Pendente", "Ok - Lançada"], required=True)
-            })
-            
-            if st.button("Salvar Status"):
-                sh = conectar_google()
-                ws = sh.worksheet("Chapas_Producao")
-                for i, r in enumerate(ws.get_all_records()):
-                    rid = r['id']
-                    row_ed = df_show[df_show['id'] == rid]
-                    if not row_ed.empty and r['status_reserva'] != row_ed.iloc[0]['status_reserva']:
-                        ws.update_cell(i+2, 5, row_ed.iloc[0]['status_reserva'])
-                obter_dados_chapas.clear()
-                st.success("Salvo!")
-                st.rerun()
-            
-            # --- CONSTRUÇÃO DO RELATÓRIO PARA EXCEL ---
-            lst = []
-            for _, r in df.iterrows():
-                # Note o uso de float() explícito aqui
-                lst.append({
-                    'Lote': r['lote'], 'Reserva': r['reserva'], 'SAP': r['cod_sap'],
-                    'Descrição': r['descricao'], 'Status': r['status_reserva'],
-                    'Qtd': int(r['qtd']),
-                    'Peso Lançamento (kg)': float(r['peso_teorico']),
-                    'Largura Real': int(r['largura_real_mm']),
-                    'Largura Consid.': int(r['largura_corte_mm']),
-                    'Comp. Real': int(r['tamanho_real_mm']),
-                    'Comp. Consid.': int(r['tamanho_corte_mm'])
-                })
-                if float(r['sucata']) > 0.001:
-                    lst.append({
-                        'Lote': 'VIRTUAL', 'Reserva': r['reserva'], 'SAP': r['cod_sap'],
-                        'Descrição': f"SUCATA - {r['descricao']}", 'Status': r['status_reserva'],
-                        'Qtd': 1, 
-                        'Peso Lançamento (kg)': float(r['sucata']),
-                        'Largura Real': 0, 'Largura Consid.': 0,
-                        'Comp. Real': 0, 'Comp. Consid.': 0
+            if not df.empty:
+                for c in ['peso_real', 'sucata', 'peso_teorico', 'qtd']:
+                    if c in df.columns: df[c] = df[c].apply(normalizar_numero_br)
+                
+                t1, t2 = st.tabs(["Tabela", "KPIs"])
+                with t1:
+                    if st.button("Atualizar"): st.rerun()
+                    c1,c2,c3 = st.columns(3)
+                    c1.metric("Itens", len(df))
+                    c2.metric("Total", formatar_br(df['peso_real'].sum()))
+                    c3.metric("Sucata", formatar_br(df['sucata'].sum()))
+                    
+                    df_show = st.data_editor(df, key="ed", use_container_width=True, column_config={
+                        "id": st.column_config.NumberColumn(disabled=True),
+                        "status_reserva": st.column_config.SelectboxColumn("Status", options=["Pendente", "Ok - Lançada"], required=True)
                     })
-            
-            df_exp = pd.DataFrame(lst)
-
-            # --- CORREÇÃO FINAL PARA O EXCEL ---
-            b = io.BytesIO()
-            with pd.ExcelWriter(b, engine='openpyxl') as w:
-                # Escreve os dados. O Pandas enviará os floats corretamente.
-                df_exp.to_excel(w, index=False, sheet_name='Relatorio')
-                
-                ws_x = w.sheets['Relatorio']
-                
-                # Identifica a letra da coluna do Peso (ex: 'G')
-                # Isso garante que mesmo que a ordem mude, pegaremos a coluna certa
-                col_peso_idx = df_exp.columns.get_loc('Peso Lançamento (kg)') + 1
-                
-                # Percorre as células desta coluna formatando-as
-                for row_idx in range(2, ws_x.max_row + 1):
-                    cell = ws_x.cell(row=row_idx, column=col_peso_idx)
-                    # Força o Excel a entender que o valor DEVE ser numérico
-                    if cell.value is not None:
+                    
+                    if st.button("Salvar Status"):
+                        for i, r in enumerate(ws.get_all_records()):
+                            rid = r['id']
+                            row_ed = df_show[df_show['id'] == rid]
+                            if not row_ed.empty and r['status_reserva'] != row_ed.iloc[0]['status_reserva']:
+                                ws.update_cell(i+2, 5, row_ed.iloc[0]['status_reserva'])
+                        st.success("Salvo!")
+                        st.rerun()
+                    
+                    # EXPORTAÇÃO BLINDADA
+                    lst = []
+                    for _, r in df.iterrows():
+                        lst.append({
+                            'Lote': r['lote'], 'Reserva': r['reserva'], 'SAP': r['cod_sap'],
+                            'Descrição': r['descricao'], 'Status': r['status_reserva'],
+                            'Qtd': int(r['qtd']),
+                            'Peso Lançamento (kg)': float(r['peso_teorico']), # FLOAT
+                            'Largura Real': int(r['largura_real_mm']),
+                            'Largura Consid.': int(r['largura_corte_mm']),
+                            'Comp. Real': int(r['tamanho_real_mm']),
+                            'Comp. Consid.': int(r['tamanho_corte_mm'])
+                        })
+                        if r['sucata'] > 0.001:
+                            lst.append({
+                                'Lote': 'VIRTUAL', 'Reserva': r['reserva'], 'SAP': r['cod_sap'],
+                                'Descrição': f"SUCATA - {r['descricao']}", 'Status': r['status_reserva'],
+                                'Qtd': 1, 'Peso Lançamento (kg)': float(r['sucata']), # FLOAT
+                                'Largura Real': 0, 'Largura Consid.': 0,
+                                'Comp. Real': 0, 'Comp. Consid.': 0
+                            })
+                    
+                    df_export = pd.DataFrame(lst)
+                    b = io.BytesIO()
+                    with pd.ExcelWriter(b, engine='openpyxl') as w:
+                        df_export.to_excel(w, index=False, sheet_name='Relatorio')
+                        worksheet = w.sheets['Relatorio']
                         try:
-                            cell.value = float(cell.value)
-                            # Formato numérico BR: vírgula para decimal, ponto para milhar
-                            # No openpyxl usamos o padrão americano no código, o Excel traduz
-                            cell.number_format = '#,##0.000'
-                        except:
-                            pass
-
-            st.download_button(
-                label="📥 Baixar Excel Corrigido",
-                data=b.getvalue(),
-                file_name=f"Relatorio_Chapas_{datetime.now().strftime('%H%M%S')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                type="primary"
-            )
+                            # FORMATAÇÃO DO EXCEL
+                            idx = df_export.columns.get_loc('Peso Lançamento (kg)') + 1
+                            for row in range(2, worksheet.max_row + 1):
+                                worksheet.cell(row=row, column=idx).number_format = '#,##0.000'
+                        except: pass
+                    
+                    st.download_button("Baixar Excel", b.getvalue(), "Relatorio_Chapas.xlsx", "primary")
         else: st.info("Sem dados")
     else: st.error("Senha incorreta")
 
 elif perfil == "Super Admin":
     st.title("🛠️ Super Admin")
     if st.sidebar.text_input("Senha Mestra", type="password") == "Workaround&97146605":
-        sh = conectar_google()
-        if st.button("💣 ZERAR TUDO", type="primary"):
-            sh.worksheet("Chapas_Producao").clear()
-            sh.worksheet("Chapas_Producao").append_row(["id","data_hora","lote","reserva","status_reserva","cod_sap","descricao","qtd","peso_real","largura_real_mm","largura_corte_mm","tamanho_real_mm","tamanho_corte_mm","peso_teorico","sucata"])
-            sh.worksheet("Chapas_Lotes").clear()
-            sh.worksheet("Chapas_Lotes").append_row(["cod_sap","ultimo_numero"])
-            st.success("Limpo!")
-            obter_dados_chapas.clear()
-        
-        st.write("---")
-        st.write("Lotes")
-        try:
-            ws_l = sh.worksheet("Chapas_Lotes")
-            df_l = pd.DataFrame(ws_l.get_all_records())
-            st.dataframe(df_l)
-            c1,c2 = st.columns(2)
-            sap = c1.number_input("SAP", step=1)
-            nv = c2.number_input("Novo", step=1)
-            if st.button("Atualizar"):
-                c = ws_l.find(str(sap))
-                ws_l.update_cell(c.row, 2, nv)
-                st.success("Feito")
-        except: st.error("Erro")
-        
-        st.write("---")
-        st.write("Excluir ID")
-        idd = st.number_input("ID", step=1)
-        if st.button("Excluir"):
-            ws_p = sh.worksheet("Chapas_Producao")
+        sh = conectar_google_retry()
+        if sh:
+            if st.button("💣 ZERAR TUDO", type="primary"):
+                sh.worksheet("Chapas_Producao").clear()
+                sh.worksheet("Chapas_Producao").append_row(["id","data_hora","lote","reserva","status_reserva","cod_sap","descricao","qtd","peso_real","largura_real_mm","largura_corte_mm","tamanho_real_mm","tamanho_corte_mm","peso_teorico","sucata"])
+                sh.worksheet("Chapas_Lotes").clear()
+                sh.worksheet("Chapas_Lotes").append_row(["cod_sap","ultimo_numero"])
+                st.success("Limpo!")
+            
+            st.write("---")
+            st.write("Lotes")
             try:
-                c = ws_p.find(str(idd))
-                ws_p.delete_rows(c.row)
-                st.success("Feito")
-                obter_dados_chapas.clear()
-            except: st.error("Não achado")
+                ws_l = sh.worksheet("Chapas_Lotes")
+                df_l = pd.DataFrame(ws_l.get_all_records())
+                st.dataframe(df_l)
+                c1,c2 = st.columns(2)
+                sap = c1.number_input("SAP", step=1)
+                nv = c2.number_input("Novo", step=1)
+                if st.button("Atualizar"):
+                    c = ws_l.find(str(sap))
+                    ws_l.update_cell(c.row, 2, nv)
+                    st.success("Feito")
+            except: st.error("Erro Lotes")
+            
+            st.write("---")
+            st.write("Excluir ID")
+            idd = st.number_input("ID", step=1)
+            if st.button("Excluir"):
+                ws_p = sh.worksheet("Chapas_Producao")
+                try:
+                    c = ws_p.find(str(idd))
+                    ws_p.delete_rows(c.row)
+                    st.success("Feito")
+                except: st.error("Não achado")
     else: st.error("Negado")
