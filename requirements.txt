@@ -1,5 +1,4 @@
 streamlit
 pandas
 openpyxl
-gspread==5.10.0
-oauth2client
+google-cloud-firestore
