@@ -73,12 +73,8 @@ def limpar_numero(v):
     except: return 0.0
 
 def formatar_br(v):
+    # Apenas para tela
     try: return f"{float(v):,.3f}".replace(",", "X").replace(".", ",").replace("X", ".")
-    except: return "0,000"
-
-def formatar_excel(v):
-    # Exportação (70,650)
-    try: return f"{float(v):.3f}".replace(".", ",")
     except: return "0,000"
 
 def regra_300(mm):
@@ -266,12 +262,13 @@ elif perfil == "Administrador (Escritório)":
                         st.success("Salvo!")
                         st.rerun()
                     
+                    # --- EXPORTAÇÃO EXCEL CORRIGIDA ---
                     lst = []
                     for _, r in df.iterrows():
                         lst.append({
                             'Lote':r['lote'], 'Reserva':r['reserva'], 'SAP':r['cod_sap'], 
                             'Descrição':r['descricao'], 'Status':r['status_reserva'], 'Qtd':r['qtd'], 
-                            'Peso Lançamento (kg)': formatar_excel(r['peso_teorico']), # <--- VÍRGULA
+                            'Peso Lançamento (kg)': round(float(r['peso_teorico']), 3), # <--- NÚMERO
                             'Largura Real':r['largura_real_mm'], 'Largura Consid.':r['largura_corte_mm'], 
                             'Comp. Real':r['tamanho_real_mm'], 'Comp. Consid.':r['tamanho_corte_mm']
                         })
@@ -279,7 +276,7 @@ elif perfil == "Administrador (Escritório)":
                             lst.append({
                                 'Lote':'VIRTUAL', 'Reserva':r['reserva'], 'SAP':r['cod_sap'], 
                                 'Descrição':f"SUCATA - {r['descricao']}", 'Status':r['status_reserva'], 
-                                'Qtd':1, 'Peso Lançamento (kg)': formatar_excel(r['sucata']), # <--- VÍRGULA
+                                'Qtd':1, 'Peso Lançamento (kg)': round(float(r['sucata']), 3), # <--- NÚMERO
                                 'Largura Real':0, 'Largura Consid.':0, 'Comp. Real':0, 'Comp. Consid.':0
                             })
                     
