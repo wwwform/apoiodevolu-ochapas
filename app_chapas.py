@@ -65,13 +65,7 @@ def garantir_cabecalhos():
 
 garantir_cabecalhos()
 
-# --- FUNÇÕES ÚTEIS ---
-def limpar_numero(v):
-    if pd.isna(v): return 0.0
-    s = str(v).strip().replace('.','').replace(',','.')
-    try: return float(s)
-    except: return 0.0
-
+# --- FUNÇÕES ---
 def formatar_br(v):
     try: return f"{float(v):,.3f}".replace(",", "X").replace(".", ",").replace("X", ".")
     except: return "0,000"
@@ -88,14 +82,27 @@ def carregar_base_sap():
         for f in os.listdir(pasta):
             if f.lower() == "base_sap.xlsx": path = os.path.join(pasta, f); break
     if not os.path.exists(path): return None
+    
     try:
-        df = pd.read_excel(path)
+        # LÊ TUDO COMO TEXTO PARA NÃO PERDER A VÍRGULA
+        df = pd.read_excel(path, dtype=str)
         df.columns = df.columns.str.strip().str.upper()
+        
         col_prod = next((c for c in df.columns if 'PRODUTO' in c), None)
         col_peso = next((c for c in df.columns if 'PESO' in c and 'METRO' in c), None)
+        
         if col_prod and col_peso:
             df['PRODUTO'] = pd.to_numeric(df[col_prod], errors='coerce').fillna(0).astype(int)
-            df['PESO_FATOR'] = df[col_peso].apply(limpar_numero)
+            
+            def converter_peso_br(val):
+                if pd.isna(val): return 0.0
+                s = str(val).strip()
+                if '.' in s and ',' in s: s = s.replace('.', '').replace(',', '.')
+                elif ',' in s: s = s.replace(',', '.')
+                try: return float(s)
+                except: return 0.0
+
+            df['PESO_FATOR'] = df[col_peso].apply(converter_peso_br)
             return df
         return None
     except: return None
@@ -115,9 +122,11 @@ if perfil == "Operador (Chão de Fábrica)":
         def wizard():
             st.write(f"**Item:** {st.session_state.wizard_data.get('Cód. SAP')} - {st.session_state.wizard_data.get('Descrição')}")
             
-            # --- FATOR EDITÁVEL (A SALVAÇÃO) ---
-            fator_inicial = st.session_state.wizard_data.get('PESO_FATOR', 0.0)
-            fator_real = st.number_input("Fator SAP (kg/m²):", value=float(fator_inicial), format="%.4f")
+            fator = st.session_state.wizard_data.get('PESO_FATOR', 0.0)
+            if fator > 1000:
+                st.error(f"🚨 FATOR SAP ERRADO: {fator}. Parece multiplicado por 100.")
+            else:
+                st.info(f"Fator SAP: **{formatar_br(fator)} kg/m²**")
             
             st.markdown("---")
             if st.session_state.wizard_step == 1:
@@ -126,7 +135,6 @@ if perfil == "Operador (Chão de Fábrica)":
                     if st.form_submit_button("PRÓXIMO >>", type="primary"):
                         if res.strip():
                             st.session_state.wizard_data['Reserva'] = res
-                            st.session_state.wizard_data['PESO_FATOR'] = fator_real # Salva o valor da tela
                             st.session_state.wizard_step = 2
                             st.rerun()
                         else: st.error("Obrigatório")
@@ -156,23 +164,19 @@ if perfil == "Operador (Chão de Fábrica)":
                         st.rerun()
                         
             elif st.session_state.wizard_step == 5:
-                # CÁLCULO DINÂMICO NA TELA
                 comp = st.number_input("5. Comp. Real (mm):", min_value=0, key="input_comp")
                 
-                # Pega dados da sessão
                 fator = st.session_state.wizard_data['PESO_FATOR']
                 q = st.session_state.wizard_data['Qtd']
                 larg_real = st.session_state.wizard_data['Largura Real (mm)']
-                
-                # Regras de corte
                 lc = regra_300(larg_real)
                 tc = regra_300(comp)
                 
-                # Conta: Fator * Larg(m) * Comp(m) * Qtd
+                # Fator * Larg(m) * Comp(m) * Qtd
                 peso_teorico_prev = fator * (lc/1000.0) * (tc/1000.0) * q
                 
                 if comp > 0:
-                    st.info(f"📏 Corte: {lc}x{tc}mm | ⚖️ Peso Teórico Calc: **{formatar_br(peso_teorico_prev)} kg**")
+                    st.info(f"📏 Corte: {lc}x{tc}mm | ⚖️ Teórico: **{formatar_br(peso_teorico_prev)} kg**")
                 
                 if st.button("✅ SALVAR E FINALIZAR", type="primary"):
                     if comp > 0:
@@ -181,7 +185,6 @@ if perfil == "Operador (Chão de Fábrica)":
                             ws_p = sh.worksheet("Chapas_Producao")
                             ws_l = sh.worksheet("Chapas_Lotes")
                             
-                            # Lote
                             sap = st.session_state.wizard_data['Cód. SAP']
                             try:
                                 cell = ws_l.find(str(sap))
@@ -193,20 +196,16 @@ if perfil == "Operador (Chão de Fábrica)":
                                 ws_l.append_row([sap, prox])
                             lote = f"BRASA{prox:05d}"
                             
-                            # Dados Finais
                             pr = st.session_state.wizard_data['Peso Balança (kg)']
                             suc = pr - peso_teorico_prev
                             
                             row = [
                                 int(datetime.now().timestamp()*1000),
                                 datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
-                                lote,
-                                st.session_state.wizard_data['Reserva'],
-                                "Pendente", int(sap),
-                                st.session_state.wizard_data['Descrição'],
+                                lote, st.session_state.wizard_data['Reserva'],
+                                "Pendente", int(sap), st.session_state.wizard_data['Descrição'],
                                 int(q), float(pr), int(larg_real), int(lc),
-                                int(comp), int(tc),
-                                float(peso_teorico_prev), float(suc)
+                                int(comp), int(tc), float(peso_teorico_prev), float(suc)
                             ]
                             ws_p.append_row(row)
                             st.toast(f"Lote {lote} Salvo!", icon="✅")
@@ -252,8 +251,8 @@ elif perfil == "Administrador (Escritório)":
                     if st.button("Atualizar"): st.rerun()
                     c1,c2,c3 = st.columns(3)
                     c1.metric("Itens", len(df))
-                    c2.metric("Total (kg)", formatar_br(df['peso_real'].sum()))
-                    c3.metric("Sucata (kg)", formatar_br(df['sucata'].sum()))
+                    c2.metric("Total", formatar_br(df['peso_real'].sum()))
+                    c3.metric("Sucata", formatar_br(df['sucata'].sum()))
                     
                     df_show = st.data_editor(df, key="ed_chapas", use_container_width=True, column_config={
                         "id": st.column_config.NumberColumn(disabled=True),
@@ -269,7 +268,6 @@ elif perfil == "Administrador (Escritório)":
                         st.success("Salvo!")
                         st.rerun()
                     
-                    # Export
                     lst = []
                     for _, r in df.iterrows():
                         lst.append({'Lote':r['lote'], 'Reserva':r['reserva'], 'SAP':r['cod_sap'], 'Descrição':r['descricao'], 'Status':r['status_reserva'], 'Qtd':r['qtd'], 'Peso Lançamento (kg)':formatar_br(r['peso_teorico']), 'Largura Real':r['largura_real_mm'], 'Largura Consid.':r['largura_corte_mm'], 'Comp. Real':r['tamanho_real_mm'], 'Comp. Consid.':r['tamanho_corte_mm']})
@@ -287,7 +285,7 @@ elif perfil == "Administrador (Escritório)":
                 st.metric("Índice de Sucata", f"{idx:.2f}%")
                 st.bar_chart(df.groupby("descricao")["peso_real"].sum().sort_values(ascending=False).head(10))
         else: st.info("Sem dados")
-    else: st.sidebar.error("Senha incorreta")
+    else: st.error("Senha incorreta")
 
 elif perfil == "Super Admin":
     st.title("🛠️ Super Admin")
