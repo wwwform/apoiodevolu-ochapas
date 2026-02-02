@@ -84,25 +84,20 @@ def carregar_base_sap():
     if not os.path.exists(path): return None
     
     try:
-        # LÊ TUDO COMO TEXTO PARA NÃO PERDER A VÍRGULA
         df = pd.read_excel(path, dtype=str)
         df.columns = df.columns.str.strip().str.upper()
-        
         col_prod = next((c for c in df.columns if 'PRODUTO' in c), None)
         col_peso = next((c for c in df.columns if 'PESO' in c and 'METRO' in c), None)
-        
         if col_prod and col_peso:
             df['PRODUTO'] = pd.to_numeric(df[col_prod], errors='coerce').fillna(0).astype(int)
-            
-            def converter_peso_br(val):
-                if pd.isna(val): return 0.0
-                s = str(val).strip()
-                if '.' in s and ',' in s: s = s.replace('.', '').replace(',', '.')
-                elif ',' in s: s = s.replace(',', '.')
+            def conv(x):
+                if pd.isna(x): return 0.0
+                s = str(x).strip()
+                if '.' in s and ',' in s: s = s.replace('.','').replace(',','.')
+                elif ',' in s: s = s.replace(',','.')
                 try: return float(s)
                 except: return 0.0
-
-            df['PESO_FATOR'] = df[col_peso].apply(converter_peso_br)
+            df['PESO_FATOR'] = df[col_peso].apply(conv)
             return df
         return None
     except: return None
@@ -122,11 +117,8 @@ if perfil == "Operador (Chão de Fábrica)":
         def wizard():
             st.write(f"**Item:** {st.session_state.wizard_data.get('Cód. SAP')} - {st.session_state.wizard_data.get('Descrição')}")
             
-            fator = st.session_state.wizard_data.get('PESO_FATOR', 0.0)
-            if fator > 1000:
-                st.error(f"🚨 FATOR SAP ERRADO: {fator}. Parece multiplicado por 100.")
-            else:
-                st.info(f"Fator SAP: **{formatar_br(fator)} kg/m²**")
+            fator_inicial = st.session_state.wizard_data.get('PESO_FATOR', 0.0)
+            fator_real = st.number_input("Fator SAP (kg/m²):", value=float(fator_inicial), format="%.4f")
             
             st.markdown("---")
             if st.session_state.wizard_step == 1:
@@ -135,10 +127,10 @@ if perfil == "Operador (Chão de Fábrica)":
                     if st.form_submit_button("PRÓXIMO >>", type="primary"):
                         if res.strip():
                             st.session_state.wizard_data['Reserva'] = res
+                            st.session_state.wizard_data['PESO_FATOR'] = fator_real
                             st.session_state.wizard_step = 2
                             st.rerun()
                         else: st.error("Obrigatório")
-                        
             elif st.session_state.wizard_step == 2:
                 with st.form("f2"):
                     qtd = st.number_input("2. Qtd (Peças):", min_value=1, step=1)
@@ -146,7 +138,6 @@ if perfil == "Operador (Chão de Fábrica)":
                         st.session_state.wizard_data['Qtd'] = qtd
                         st.session_state.wizard_step = 3
                         st.rerun()
-                        
             elif st.session_state.wizard_step == 3:
                 with st.form("f3"):
                     peso = st.number_input("3. Peso Real (kg):", min_value=0.001, format="%.3f")
@@ -154,7 +145,6 @@ if perfil == "Operador (Chão de Fábrica)":
                         st.session_state.wizard_data['Peso Balança (kg)'] = peso
                         st.session_state.wizard_step = 4
                         st.rerun()
-            
             elif st.session_state.wizard_step == 4:
                 with st.form("f4"):
                     larg = st.number_input("4. Largura Real (mm):", min_value=0)
@@ -162,7 +152,6 @@ if perfil == "Operador (Chão de Fábrica)":
                         st.session_state.wizard_data['Largura Real (mm)'] = larg
                         st.session_state.wizard_step = 5
                         st.rerun()
-                        
             elif st.session_state.wizard_step == 5:
                 comp = st.number_input("5. Comp. Real (mm):", min_value=0, key="input_comp")
                 
@@ -171,8 +160,6 @@ if perfil == "Operador (Chão de Fábrica)":
                 larg_real = st.session_state.wizard_data['Largura Real (mm)']
                 lc = regra_300(larg_real)
                 tc = regra_300(comp)
-                
-                # Fator * Larg(m) * Comp(m) * Qtd
                 peso_teorico_prev = fator * (lc/1000.0) * (tc/1000.0) * q
                 
                 if comp > 0:
@@ -268,11 +255,24 @@ elif perfil == "Administrador (Escritório)":
                         st.success("Salvo!")
                         st.rerun()
                     
+                    # --- EXPORTAÇÃO EXCEL CORRIGIDA ---
                     lst = []
                     for _, r in df.iterrows():
-                        lst.append({'Lote':r['lote'], 'Reserva':r['reserva'], 'SAP':r['cod_sap'], 'Descrição':r['descricao'], 'Status':r['status_reserva'], 'Qtd':r['qtd'], 'Peso Lançamento (kg)':formatar_br(r['peso_teorico']), 'Largura Real':r['largura_real_mm'], 'Largura Consid.':r['largura_corte_mm'], 'Comp. Real':r['tamanho_real_mm'], 'Comp. Consid.':r['tamanho_corte_mm']})
+                        # AQUI: float() puro para exportar
+                        lst.append({
+                            'Lote':r['lote'], 'Reserva':r['reserva'], 'SAP':r['cod_sap'], 
+                            'Descrição':r['descricao'], 'Status':r['status_reserva'], 'Qtd':r['qtd'], 
+                            'Peso Lançamento (kg)': float(r['peso_teorico']), # <--- NÚMERO
+                            'Largura Real':r['largura_real_mm'], 'Largura Consid.':r['largura_corte_mm'], 
+                            'Comp. Real':r['tamanho_real_mm'], 'Comp. Consid.':r['tamanho_corte_mm']
+                        })
                         if r['sucata'] > 0.001:
-                            lst.append({'Lote':'VIRTUAL', 'Reserva':r['reserva'], 'SAP':r['cod_sap'], 'Descrição':f"SUCATA - {r['descricao']}", 'Status':r['status_reserva'], 'Qtd':1, 'Peso Lançamento (kg)':formatar_br(r['sucata']), 'Largura Real':0, 'Largura Consid.':0, 'Comp. Real':0, 'Comp. Consid.':0})
+                            lst.append({
+                                'Lote':'VIRTUAL', 'Reserva':r['reserva'], 'SAP':r['cod_sap'], 
+                                'Descrição':f"SUCATA - {r['descricao']}", 'Status':r['status_reserva'], 
+                                'Qtd':1, 'Peso Lançamento (kg)': float(r['sucata']), # <--- NÚMERO
+                                'Largura Real':0, 'Largura Consid.':0, 'Comp. Real':0, 'Comp. Consid.':0
+                            })
                     
                     b = io.BytesIO()
                     with pd.ExcelWriter(b, engine='openpyxl') as w: pd.DataFrame(lst).to_excel(w, index=False)
