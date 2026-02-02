@@ -73,7 +73,7 @@ def limpar_numero(v):
     except: return 0.0
 
 def formatar_br(v):
-    # Apenas para tela
+    # Formata para visual brasileiro
     try: return f"{float(v):,.3f}".replace(",", "X").replace(".", ",").replace("X", ".")
     except: return "0,000"
 
@@ -262,13 +262,14 @@ elif perfil == "Administrador (Escritório)":
                         st.success("Salvo!")
                         st.rerun()
                     
-                    # --- EXPORTAÇÃO EXCEL CORRIGIDA ---
+                    # --- EXPORTAÇÃO EXCEL CORRIGIDA (SEM ASPAS) ---
                     lst = []
                     for _, r in df.iterrows():
+                        # AQUI: formatar_br garante que sai STRING com vírgula (Ex: "70,650")
                         lst.append({
                             'Lote':r['lote'], 'Reserva':r['reserva'], 'SAP':r['cod_sap'], 
                             'Descrição':r['descricao'], 'Status':r['status_reserva'], 'Qtd':r['qtd'], 
-                            'Peso Lançamento (kg)': round(float(r['peso_teorico']), 3), # <--- NÚMERO
+                            'Peso Lançamento (kg)': formatar_br(r['peso_teorico']), # <--- FORMATAÇÃO BR
                             'Largura Real':r['largura_real_mm'], 'Largura Consid.':r['largura_corte_mm'], 
                             'Comp. Real':r['tamanho_real_mm'], 'Comp. Consid.':r['tamanho_corte_mm']
                         })
@@ -276,7 +277,7 @@ elif perfil == "Administrador (Escritório)":
                             lst.append({
                                 'Lote':'VIRTUAL', 'Reserva':r['reserva'], 'SAP':r['cod_sap'], 
                                 'Descrição':f"SUCATA - {r['descricao']}", 'Status':r['status_reserva'], 
-                                'Qtd':1, 'Peso Lançamento (kg)': round(float(r['sucata']), 3), # <--- NÚMERO
+                                'Qtd':1, 'Peso Lançamento (kg)': formatar_br(r['sucata']), # <--- FORMATAÇÃO BR
                                 'Largura Real':0, 'Largura Consid.':0, 'Comp. Real':0, 'Comp. Consid.':0
                             })
                     
