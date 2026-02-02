@@ -3,6 +3,7 @@ import pandas as pd
 from google.cloud import firestore
 from google.oauth2 import service_account
 from datetime import datetime
+import time  # <--- FALTAVA ISSO AQUI
 import json
 import io
 import os
@@ -27,7 +28,10 @@ def get_proximo_lote(db, cod_sap):
         dados = doc.to_dict()
         
     sap_str = str(cod_sap)
-    novo = int(dados.get(sap_str, 0)) + 1
+    # Garante que trata como inteiro, se não existir assume 0
+    ultimo = int(dados.get(sap_str, 0))
+    novo = ultimo + 1
+    
     doc_ref.set({sap_str: novo}, merge=True)
     return f"BRASA{novo:05d}"
 
@@ -43,6 +47,7 @@ def salvar(dados):
     return lote
 
 def formatar_br(v):
+    # Apenas visualização
     try: return f"{float(v):,.3f}".replace(",", "X").replace(".", ",").replace("X", ".")
     except: return "0,000"
 
@@ -55,6 +60,7 @@ def carregar_base_sap():
     path = "base_sap.xlsx"
     if not os.path.exists(path): return None
     try:
+        # Leitura blindada
         df = pd.read_excel(path, dtype=str)
         df.columns = df.columns.str.strip().str.upper()
         col_prod = next((c for c in df.columns if 'PRODUTO' in c), None)
@@ -127,33 +133,37 @@ if perfil == "Operador":
                 lc = regra_300(larg_real)
                 tc = regra_300(comp)
                 
-                # Fator (kg/m2) * larg(m) * comp(m) * qtd
+                # Cálculo Chapas
                 pt = fator * (lc/1000.0) * (tc/1000.0) * q
                 
                 if comp > 0: st.info(f"Calc: **{formatar_br(pt)} kg**")
                 
                 if st.button("✅ SALVAR"):
                     if comp > 0:
-                        suc = float(st.session_state.wizard_data['peso_real']) - pt
-                        dados = {
-                            'cod_sap': int(st.session_state.wizard_data['Cód. SAP']),
-                            'descricao': st.session_state.wizard_data['Descrição'],
-                            'reserva': st.session_state.wizard_data['reserva'],
-                            'qtd': int(q),
-                            'peso_real': float(st.session_state.wizard_data['peso_real']),
-                            'largura_real_mm': int(larg_real),
-                            'largura_corte_mm': int(lc),
-                            'tamanho_real_mm': int(comp),
-                            'tamanho_corte_mm': int(tc),
-                            'peso_teorico': float(pt),
-                            'sucata': float(suc)
-                        }
-                        lote = salvar(dados)
-                        st.toast(f"Lote {lote} Salvo!")
-                        st.session_state.wizard_step = 0
-                        st.session_state.input_scanner = ""
-                        time.sleep(1)
-                        st.rerun()
+                        with st.spinner("Salvando..."):
+                            suc = float(st.session_state.wizard_data['peso_real']) - pt
+                            dados = {
+                                'cod_sap': int(st.session_state.wizard_data['Cód. SAP']),
+                                'descricao': st.session_state.wizard_data['Descrição'],
+                                'reserva': st.session_state.wizard_data['reserva'],
+                                'qtd': int(q),
+                                'peso_real': float(st.session_state.wizard_data['peso_real']),
+                                'largura_real_mm': int(larg_real),
+                                'largura_corte_mm': int(lc),
+                                'tamanho_real_mm': int(comp),
+                                'tamanho_corte_mm': int(tc),
+                                'peso_teorico': float(pt),
+                                'sucata': float(suc)
+                            }
+                            try:
+                                lote = salvar(dados)
+                                st.toast(f"Lote {lote} Salvo!")
+                                st.session_state.wizard_step = 0
+                                st.session_state.input_scanner = ""
+                                time.sleep(1) # Agora vai funcionar
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Erro: {e}")
                     else: st.error("Inválido")
 
         def check():
@@ -205,7 +215,7 @@ elif perfil == "Administrador":
                 st.success("Salvo!")
                 st.rerun()
                 
-            # --- EXPORTAÇÃO EXCEL COM SUCATA VIRTUAL ---
+            # --- EXPORTAÇÃO CORRETA COM LINHA VIRTUAL ---
             lst_export = []
             for _, r in df_show.iterrows():
                 lst_export.append({
@@ -221,6 +231,7 @@ elif perfil == "Administrador":
                     'Comp. Real': int(r['tamanho_real_mm']),
                     'Comp. Consid.': int(r['tamanho_corte_mm'])
                 })
+                # Linha virtual se tiver sucata
                 if float(r['sucata']) > 0.001:
                     lst_export.append({
                         'Lote': 'VIRTUAL',
@@ -230,7 +241,10 @@ elif perfil == "Administrador":
                         'Status': r['status_reserva'],
                         'Qtd': 1,
                         'Peso Lançamento (kg)': float(r['sucata']),
-                        'Largura Real': 0, 'Largura Consid.': 0, 'Comp. Real': 0, 'Comp. Consid.': 0
+                        'Largura Real': 0,
+                        'Largura Consid.': 0,
+                        'Comp. Real': 0,
+                        'Comp. Consid.': 0
                     })
             
             df_export = pd.DataFrame(lst_export)
@@ -238,9 +252,11 @@ elif perfil == "Administrador":
             with pd.ExcelWriter(b, engine='openpyxl') as w:
                 df_export.to_excel(w, index=False, sheet_name='Relatorio')
                 ws = w.sheets['Relatorio']
-                col_indices = [i+1 for i, c in enumerate(df_export.columns) if 'peso' in c.lower() or 'sucata' in c.lower()]
+                
+                # Acha colunas de peso para formatar
+                cols_formatar = [i+1 for i, c in enumerate(df_export.columns) if 'peso' in c.lower() or 'sucata' in c.lower()]
                 for r in range(2, ws.max_row + 1):
-                    for c in col_indices:
+                    for c in cols_formatar:
                         ws.cell(row=r, column=c).number_format = '#,##0.000'
                         
             st.download_button("Baixar Excel", b.getvalue(), "Relatorio_Chapas.xlsx", "primary")
@@ -257,25 +273,16 @@ elif perfil == "Super Admin":
             st.success("Limpo")
         
         st.write("---")
-        st.write("Ajuste de Lotes")
+        st.write("### Ajustar Lotes")
         doc = db.collection('controles').document('lotes_chapas').get()
         if doc.exists:
             data = doc.to_dict()
             st.table(pd.DataFrame(list(data.items()), columns=['SAP', 'Último Lote']))
+            
             c1, c2 = st.columns(2)
             sap = c1.number_input("SAP", step=1)
             val = c2.number_input("Valor", step=1)
             if c2.button("Atualizar"):
                 db.collection('controles').document('lotes_chapas').set({str(sap): val}, merge=True)
                 st.success("Feito")
-        
-        st.write("---")
-        st.write("Excluir por ID")
-        docs = db.collection('chapas_producao').order_by('timestamp', direction=firestore.Query.DESCENDING).limit(10).stream()
-        lista = [{'ID': d.id, 'Lote': d.to_dict().get('lote')} for d in docs]
-        st.dataframe(pd.DataFrame(lista))
-        
-        idd = st.text_input("ID:")
-        if st.button("Deletar"):
-            db.collection('chapas_producao').document(idd).delete()
-            st.success("Deletado")
+                st.rerun()
