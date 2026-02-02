@@ -66,18 +66,19 @@ def garantir_cabecalhos():
 garantir_cabecalhos()
 
 # --- FUNÇÕES ---
-def limpar_numero_sap(valor):
-    if pd.isna(valor): return 0.0
-    if isinstance(valor, (int, float)): return float(valor)
-    
-    s = str(valor).strip()
-    if '.' in s and ',' in s: s = s.replace('.', '')
-    s = s.replace(',', '.')
+def normalizar_numero_br(v):
+    if pd.isna(v): return 0.0
+    if isinstance(v, (int, float)): return float(v)
+    s = str(v).strip()
+    if not s: return 0.0
+    if ',' in s: s = s.replace('.', '').replace(',', '.')
     try: return float(s)
     except: return 0.0
 
+def limpar_numero_sap(valor):
+    return normalizar_numero_br(valor)
+
 def formatar_br(v):
-    # Apenas TELA
     try: return f"{float(v):,.3f}".replace(",", "X").replace(".", ",").replace("X", ".")
     except: return "0,000"
 
@@ -234,8 +235,10 @@ elif perfil == "Administrador (Escritório)":
             df = pd.DataFrame(ws.get_all_records())
             
             if not df.empty:
+                # CORREÇÃO CRÍTICA NA LEITURA DO SHEETS
                 for c in ['peso_real', 'sucata', 'peso_teorico', 'qtd']:
-                    if c in df.columns: df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
+                    if c in df.columns: 
+                        df[c] = df[c].apply(normalizar_numero_br)
                 
                 t1, t2 = st.tabs(["Tabela", "KPIs"])
                 with t1:
@@ -259,7 +262,6 @@ elif perfil == "Administrador (Escritório)":
                         st.success("Salvo!")
                         st.rerun()
                     
-                    # --- EXPORTAÇÃO EXCEL CORRETA (FLOAT) ---
                     lst = []
                     for _, r in df.iterrows():
                         lst.append({
@@ -269,7 +271,7 @@ elif perfil == "Administrador (Escritório)":
                             'Descrição': r['descricao'],
                             'Status': r['status_reserva'],
                             'Qtd': int(r['qtd']),
-                            'Peso Lançamento (kg)': float(r['peso_teorico']), # FLOAT PURO
+                            'Peso Lançamento (kg)': float(r['peso_teorico']),
                             'Largura Real': int(r['largura_real_mm']),
                             'Largura Consid.': int(r['largura_corte_mm']),
                             'Comp. Real': int(r['tamanho_real_mm']),
@@ -283,7 +285,7 @@ elif perfil == "Administrador (Escritório)":
                                 'Descrição': f"SUCATA - {r['descricao']}",
                                 'Status': r['status_reserva'],
                                 'Qtd': 1,
-                                'Peso Lançamento (kg)': float(r['sucata']), # FLOAT PURO
+                                'Peso Lançamento (kg)': float(r['sucata']),
                                 'Largura Real': 0,
                                 'Largura Consid.': 0,
                                 'Comp. Real': 0,
