@@ -12,7 +12,7 @@ st.markdown("""<style>header{display:none;} .stDeployButton{display:none;} butto
 
 @st.cache_resource
 def get_db():
-    key_dict = dict(st.secrets["firebase"]) # Correção aqui
+    key_dict = dict(st.secrets["firebase"])
     creds = service_account.Credentials.from_service_account_info(key_dict)
     return firestore.Client(credentials=creds, project=key_dict["project_id"])
 
@@ -86,7 +86,6 @@ if perfil == "Operador":
         @st.dialog("📦 Entrada")
         def wizard():
             st.write(f"**Item:** {st.session_state.wizard_data.get('Cód. SAP')}")
-            # Fator oculto, sem edição
             fator_oculto = float(st.session_state.wizard_data.get('PESO_FATOR', 0.0))
             
             st.markdown("---")
@@ -128,7 +127,7 @@ if perfil == "Operador":
                 lc = regra_300(larg_real)
                 tc = regra_300(comp)
                 
-                # Fórmula Chapas: fator * larg(m) * comp(m) * qtd
+                # Fator (kg/m2) * larg(m) * comp(m) * qtd
                 pt = fator * (lc/1000.0) * (tc/1000.0) * q
                 
                 if comp > 0: st.info(f"Calc: **{formatar_br(pt)} kg**")
@@ -149,15 +148,12 @@ if perfil == "Operador":
                             'peso_teorico': float(pt),
                             'sucata': float(suc)
                         }
-                        try:
-                            lote = salvar(dados)
-                            st.toast(f"Lote {lote} Salvo!")
-                            st.session_state.wizard_step = 0
-                            st.session_state.input_scanner = ""
-                            time.sleep(1)
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Erro: {e}")
+                        lote = salvar(dados)
+                        st.toast(f"Lote {lote} Salvo!")
+                        st.session_state.wizard_step = 0
+                        st.session_state.input_scanner = ""
+                        time.sleep(1)
+                        st.rerun()
                     else: st.error("Inválido")
 
         def check():
@@ -209,16 +205,44 @@ elif perfil == "Administrador":
                 st.success("Salvo!")
                 st.rerun()
                 
+            # --- EXPORTAÇÃO EXCEL COM SUCATA VIRTUAL ---
+            lst_export = []
+            for _, r in df_show.iterrows():
+                lst_export.append({
+                    'Lote': r['lote'],
+                    'Reserva': r['reserva'],
+                    'SAP': r['cod_sap'],
+                    'Descrição': r['descricao'],
+                    'Status': r['status_reserva'],
+                    'Qtd': int(r['qtd']),
+                    'Peso Lançamento (kg)': float(r['peso_teorico']),
+                    'Largura Real': int(r['largura_real_mm']),
+                    'Largura Consid.': int(r['largura_corte_mm']),
+                    'Comp. Real': int(r['tamanho_real_mm']),
+                    'Comp. Consid.': int(r['tamanho_corte_mm'])
+                })
+                if float(r['sucata']) > 0.001:
+                    lst_export.append({
+                        'Lote': 'VIRTUAL',
+                        'Reserva': r['reserva'],
+                        'SAP': r['cod_sap'],
+                        'Descrição': f"SUCATA - {r['descricao']}",
+                        'Status': r['status_reserva'],
+                        'Qtd': 1,
+                        'Peso Lançamento (kg)': float(r['sucata']),
+                        'Largura Real': 0, 'Largura Consid.': 0, 'Comp. Real': 0, 'Comp. Consid.': 0
+                    })
+            
+            df_export = pd.DataFrame(lst_export)
             b = io.BytesIO()
             with pd.ExcelWriter(b, engine='openpyxl') as w:
-                df_export = df_show.drop(columns=['id_doc', 'timestamp'], errors='ignore')
                 df_export.to_excel(w, index=False, sheet_name='Relatorio')
                 ws = w.sheets['Relatorio']
-                try:
-                    cols = [i+1 for i, c in enumerate(df_export.columns) if 'peso' in c.lower() or 'sucata' in c.lower()]
-                    for r in range(2, ws.max_row + 1):
-                        for c in cols: ws.cell(row=r, column=c).number_format = '#,##0.000'
-                except: pass
+                col_indices = [i+1 for i, c in enumerate(df_export.columns) if 'peso' in c.lower() or 'sucata' in c.lower()]
+                for r in range(2, ws.max_row + 1):
+                    for c in col_indices:
+                        ws.cell(row=r, column=c).number_format = '#,##0.000'
+                        
             st.download_button("Baixar Excel", b.getvalue(), "Relatorio_Chapas.xlsx", "primary")
         else: st.info("Vazio")
     else: st.error("Senha incorreta")
@@ -233,12 +257,25 @@ elif perfil == "Super Admin":
             st.success("Limpo")
         
         st.write("---")
+        st.write("Ajuste de Lotes")
         doc = db.collection('controles').document('lotes_chapas').get()
         if doc.exists:
-            st.write(doc.to_dict())
+            data = doc.to_dict()
+            st.table(pd.DataFrame(list(data.items()), columns=['SAP', 'Último Lote']))
             c1, c2 = st.columns(2)
             sap = c1.number_input("SAP", step=1)
             val = c2.number_input("Valor", step=1)
             if c2.button("Atualizar"):
                 db.collection('controles').document('lotes_chapas').set({str(sap): val}, merge=True)
                 st.success("Feito")
+        
+        st.write("---")
+        st.write("Excluir por ID")
+        docs = db.collection('chapas_producao').order_by('timestamp', direction=firestore.Query.DESCENDING).limit(10).stream()
+        lista = [{'ID': d.id, 'Lote': d.to_dict().get('lote')} for d in docs]
+        st.dataframe(pd.DataFrame(lista))
+        
+        idd = st.text_input("ID:")
+        if st.button("Deletar"):
+            db.collection('chapas_producao').document(idd).delete()
+            st.success("Deletado")
