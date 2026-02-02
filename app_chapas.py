@@ -12,7 +12,7 @@ st.markdown("""<style>header{display:none;} .stDeployButton{display:none;} butto
 
 @st.cache_resource
 def get_db():
-    key_dict = dict(st.secrets["firebase"]) # Correção do erro de JSON
+    key_dict = dict(st.secrets["firebase"]) # Correção aqui
     creds = service_account.Credentials.from_service_account_info(key_dict)
     return firestore.Client(credentials=creds, project=key_dict["project_id"])
 
@@ -27,7 +27,7 @@ def get_proximo_lote(db, cod_sap):
         dados = doc.to_dict()
         
     sap_str = str(cod_sap)
-    novo = dados.get(sap_str, 0) + 1
+    novo = int(dados.get(sap_str, 0)) + 1
     doc_ref.set({sap_str: novo}, merge=True)
     return f"BRASA{novo:05d}"
 
@@ -61,14 +61,14 @@ def carregar_base_sap():
         col_peso = next((c for c in df.columns if 'PESO' in c and 'METRO' in c), None)
         if col_prod and col_peso:
             df['PRODUTO'] = pd.to_numeric(df[col_prod], errors='coerce').fillna(0).astype(int)
-            def normalizar_peso(x):
+            def cv(x):
                 if pd.isna(x): return 0.0
                 s = str(x).strip()
                 if '.' in s and ',' in s: s = s.replace('.', '')
                 s = s.replace(',', '.')
                 try: return float(s)
                 except: return 0.0
-            df['PESO_FATOR'] = df[col_peso].apply(normalizar_peso)
+            df['PESO_FATOR'] = df[col_peso].apply(cv)
             return df
         return None
     except: return None
@@ -122,14 +122,13 @@ if perfil == "Operador":
                         st.rerun()
             elif st.session_state.wizard_step == 5:
                 comp = st.number_input("5. Comp. Real (mm):", min_value=0)
-                
                 fator = st.session_state.wizard_data['PESO_FATOR']
                 q = st.session_state.wizard_data['qtd']
                 larg_real = st.session_state.wizard_data['largura']
                 lc = regra_300(larg_real)
                 tc = regra_300(comp)
                 
-                # Fator (kg/m2) * larg(m) * comp(m) * qtd
+                # Fórmula Chapas: fator * larg(m) * comp(m) * qtd
                 pt = fator * (lc/1000.0) * (tc/1000.0) * q
                 
                 if comp > 0: st.info(f"Calc: **{formatar_br(pt)} kg**")
@@ -152,7 +151,7 @@ if perfil == "Operador":
                         }
                         try:
                             lote = salvar(dados)
-                            st.toast(f"Salvo: {lote}")
+                            st.toast(f"Lote {lote} Salvo!")
                             st.session_state.wizard_step = 0
                             st.session_state.input_scanner = ""
                             time.sleep(1)
@@ -171,7 +170,7 @@ if perfil == "Operador":
                         st.session_state.wizard_data = {
                             "Cód. SAP": cod,
                             "Descrição": row.iloc[0]['DESCRIÇÃO DO PRODUTO'],
-                            "PESO_FATOR": row.iloc[0]['PESO_FATOR']
+                            "PESO_FATOR": float(row.iloc[0]['PESO_FATOR'])
                         }
                         st.session_state.wizard_step = 1
                     else: st.toast("Não encontrado")
@@ -214,13 +213,12 @@ elif perfil == "Administrador":
             with pd.ExcelWriter(b, engine='openpyxl') as w:
                 df_export = df_show.drop(columns=['id_doc', 'timestamp'], errors='ignore')
                 df_export.to_excel(w, index=False, sheet_name='Relatorio')
-                
                 ws = w.sheets['Relatorio']
-                cols_formatar = [i+1 for i, c in enumerate(df_export.columns) if 'peso' in c.lower() or 'sucata' in c.lower()]
-                for r in range(2, ws.max_row + 1):
-                    for c in cols_formatar:
-                        ws.cell(row=r, column=c).number_format = '#,##0.000'
-                        
+                try:
+                    cols = [i+1 for i, c in enumerate(df_export.columns) if 'peso' in c.lower() or 'sucata' in c.lower()]
+                    for r in range(2, ws.max_row + 1):
+                        for c in cols: ws.cell(row=r, column=c).number_format = '#,##0.000'
+                except: pass
             st.download_button("Baixar Excel", b.getvalue(), "Relatorio_Chapas.xlsx", "primary")
         else: st.info("Vazio")
     else: st.error("Senha incorreta")
@@ -237,8 +235,7 @@ elif perfil == "Super Admin":
         st.write("---")
         doc = db.collection('controles').document('lotes_chapas').get()
         if doc.exists:
-            data = doc.to_dict()
-            st.write(data)
+            st.write(doc.to_dict())
             c1, c2 = st.columns(2)
             sap = c1.number_input("SAP", step=1)
             val = c2.number_input("Valor", step=1)
