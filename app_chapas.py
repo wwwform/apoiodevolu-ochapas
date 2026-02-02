@@ -189,8 +189,6 @@ elif perfil == "Administrador":
         df = pd.DataFrame(lista)
         
         if not df.empty:
-            
-            # --- ABAS ---
             tab1, tab2 = st.tabs(["📋 Tabela de Dados", "📊 Relatórios e KPIs"])
             
             with tab1:
@@ -201,7 +199,7 @@ elif perfil == "Administrador":
                     "status_reserva": st.column_config.SelectboxColumn("Status", options=["Pendente", "Ok - Lançada"])
                 })
                 
-                if st.button("Salvar Salvos"):
+                if st.button("Salvar Status", type="primary"):
                     for i, row in df_show.iterrows():
                         orig = df[df['id_doc'] == row['id_doc']].iloc[0]['status_reserva']
                         if row['status_reserva'] != orig:
@@ -222,7 +220,6 @@ elif perfil == "Administrador":
                                 st.rerun()
                             except: st.error("Erro ao excluir.")
 
-                # EXPORTAÇÃO EXCEL
                 st.markdown("---")
                 lst_export = []
                 for _, r in df_show.iterrows():
@@ -277,40 +274,49 @@ elif perfil == "Administrador":
     else: st.error("Senha incorreta")
 
 elif perfil == "Super Admin":
-    st.title("🛠️ Super Admin")
+    st.title("🛠️ Super Admin (Controle Total)")
     if st.sidebar.text_input("Senha", type="password") == "Workaround&97146605":
         db = get_db()
         
         tab_a, tab_b, tab_c = st.tabs(["🔥 Reset Geral", "🔢 Ajuste de Lotes", "🗑️ Exclusão Manual"])
         
         with tab_a:
-            if st.button("💣 APAGAR TUDO (PERIGO)", type="primary"):
-                for d in db.collection('chapas_producao').stream(): d.reference.delete()
+            st.warning("CUIDADO: Isso apaga todos os dados de produção de Chapas!")
+            if st.button("💣 APAGAR BANCO DE DADOS INTEIRO", type="primary"):
+                docs = db.collection('chapas_producao').stream()
+                for d in docs: d.reference.delete()
                 db.collection('controles').document('lotes_chapas').delete()
-                st.success("Limpo")
+                st.success("Banco limpo!")
                 time.sleep(1)
                 st.rerun()
         
         with tab_b:
-            st.write("### Ajuste de Contadores")
+            st.write("### Contadores de Lote")
             doc = db.collection('controles').document('lotes_chapas').get()
             if doc.exists:
                 data = doc.to_dict()
-                st.table(pd.DataFrame(list(data.items()), columns=['SAP', 'Último Lote']))
+                df_lotes = pd.DataFrame(list(data.items()), columns=['Cód. SAP', 'Último Lote Gerado'])
+                st.dataframe(df_lotes, use_container_width=True)
+                
                 c1, c2 = st.columns(2)
-                sap = c1.number_input("SAP", step=1)
-                val = c2.number_input("Valor", step=1)
-                if c2.button("Atualizar"):
+                sap = c1.number_input("SAP para ajustar:", step=1, format="%d")
+                val = c2.number_input("Novo Valor (ex: 10):", step=1)
+                if c2.button("Atualizar Lote"):
                     db.collection('controles').document('lotes_chapas').set({str(sap): val}, merge=True)
-                    st.success("Feito")
+                    st.success("Atualizado!")
+                    time.sleep(1)
                     st.rerun()
-                    
+            else: st.info("Nenhum lote gerado ainda.")
+            
         with tab_c:
-            st.write("### Excluir Registro")
-            id_manual = st.text_input("Cole o ID do documento:")
-            if st.button("Excluir"):
+            st.write("### Exclusão Cirúrgica")
+            st.info("Cole o ID do documento que deseja excluir permanentemente.")
+            id_manual = st.text_input("ID do Documento:")
+            if st.button("Excluir Documento"):
                 if id_manual:
                     try:
                         db.collection('chapas_producao').document(id_manual).delete()
-                        st.success("Deletado")
-                    except: st.error("Erro")
+                        st.success("Deletado!")
+                        time.sleep(1)
+                        st.rerun()
+                    except: st.error("Erro ao deletar")
