@@ -65,15 +65,18 @@ def garantir_cabecalhos():
 
 garantir_cabecalhos()
 
-# --- FUNÇÕES ---
-def limpar_numero(v):
-    if pd.isna(v): return 0.0
-    s = str(v).strip().replace('.','').replace(',','.')
+# --- FUNÇÕES CRÍTICAS ---
+def limpar_numero_sap(valor):
+    if pd.isna(valor): return 0.0
+    if isinstance(valor, (int, float)): return float(valor) # NÃO MEXE SE JÁ FOR NÚMERO
+    
+    s = str(valor).strip()
+    if '.' in s and ',' in s: s = s.replace('.', '')
+    s = s.replace(',', '.')
     try: return float(s)
     except: return 0.0
 
 def formatar_br(v):
-    # Formata para visual brasileiro
     try: return f"{float(v):,.3f}".replace(",", "X").replace(".", ",").replace("X", ".")
     except: return "0,000"
 
@@ -90,20 +93,13 @@ def carregar_base_sap():
             if f.lower() == "base_sap.xlsx": path = os.path.join(pasta, f); break
     if not os.path.exists(path): return None
     try:
-        df = pd.read_excel(path, dtype=str)
+        df = pd.read_excel(path)
         df.columns = df.columns.str.strip().str.upper()
         col_prod = next((c for c in df.columns if 'PRODUTO' in c), None)
         col_peso = next((c for c in df.columns if 'PESO' in c and 'METRO' in c), None)
         if col_prod and col_peso:
             df['PRODUTO'] = pd.to_numeric(df[col_prod], errors='coerce').fillna(0).astype(int)
-            def conv(x):
-                if pd.isna(x): return 0.0
-                s = str(x).strip()
-                if '.' in s and ',' in s: s = s.replace('.','').replace(',','.')
-                elif ',' in s: s = s.replace(',','.')
-                try: return float(s)
-                except: return 0.0
-            df['PESO_FATOR'] = df[col_peso].apply(conv)
+            df['PESO_FATOR'] = df[col_peso].apply(limpar_numero_sap)
             return df
         return None
     except: return None
@@ -123,8 +119,8 @@ if perfil == "Operador (Chão de Fábrica)":
         def wizard():
             st.write(f"**Item:** {st.session_state.wizard_data.get('Cód. SAP')} - {st.session_state.wizard_data.get('Descrição')}")
             
-            fator_inicial = st.session_state.wizard_data.get('PESO_FATOR', 0.0)
-            fator_real = st.number_input("Fator SAP (kg/m²):", value=float(fator_inicial), format="%.4f")
+            f_ini = st.session_state.wizard_data.get('PESO_FATOR', 0.0)
+            fator_real = st.number_input("Fator SAP (kg/m²):", value=float(f_ini), format="%.4f")
             
             st.markdown("---")
             if st.session_state.wizard_step == 1:
@@ -170,7 +166,7 @@ if perfil == "Operador (Chão de Fábrica)":
                 peso_teorico_prev = fator * (lc/1000.0) * (tc/1000.0) * q
                 
                 if comp > 0:
-                    st.info(f"📏 Corte: {lc}x{tc}mm | ⚖️ Teórico: **{formatar_br(peso_teorico_prev)} kg**")
+                    st.info(f"📏 Corte: {lc}x{tc}mm | ⚖️ Calc: **{formatar_br(peso_teorico_prev)} kg**")
                 
                 if st.button("✅ SALVAR E FINALIZAR", type="primary"):
                     if comp > 0:
@@ -262,14 +258,12 @@ elif perfil == "Administrador (Escritório)":
                         st.success("Salvo!")
                         st.rerun()
                     
-                    # --- EXPORTAÇÃO EXCEL CORRIGIDA (SEM ASPAS) ---
                     lst = []
                     for _, r in df.iterrows():
-                        # AQUI: formatar_br garante que sai STRING com vírgula (Ex: "70,650")
                         lst.append({
                             'Lote':r['lote'], 'Reserva':r['reserva'], 'SAP':r['cod_sap'], 
                             'Descrição':r['descricao'], 'Status':r['status_reserva'], 'Qtd':r['qtd'], 
-                            'Peso Lançamento (kg)': formatar_br(r['peso_teorico']), # <--- FORMATAÇÃO BR
+                            'Peso Lançamento (kg)': formatar_br(r['peso_teorico']), 
                             'Largura Real':r['largura_real_mm'], 'Largura Consid.':r['largura_corte_mm'], 
                             'Comp. Real':r['tamanho_real_mm'], 'Comp. Consid.':r['tamanho_corte_mm']
                         })
@@ -277,7 +271,7 @@ elif perfil == "Administrador (Escritório)":
                             lst.append({
                                 'Lote':'VIRTUAL', 'Reserva':r['reserva'], 'SAP':r['cod_sap'], 
                                 'Descrição':f"SUCATA - {r['descricao']}", 'Status':r['status_reserva'], 
-                                'Qtd':1, 'Peso Lançamento (kg)': formatar_br(r['sucata']), # <--- FORMATAÇÃO BR
+                                'Qtd':1, 'Peso Lançamento (kg)': formatar_br(r['sucata']),
                                 'Largura Real':0, 'Largura Consid.':0, 'Comp. Real':0, 'Comp. Consid.':0
                             })
                     
