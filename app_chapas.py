@@ -201,7 +201,7 @@ elif perfil == "Administrador":
                     "status_reserva": st.column_config.SelectboxColumn("Status", options=["Pendente", "Ok - Lançada"])
                 })
                 
-                if st.button("Salvar Status"):
+                if st.button("Salvar Salvos"):
                     for i, row in df_show.iterrows():
                         orig = df[df['id_doc'] == row['id_doc']].iloc[0]['status_reserva']
                         if row['status_reserva'] != orig:
@@ -210,7 +210,6 @@ elif perfil == "Administrador":
                     time.sleep(1)
                     st.rerun()
                 
-                # EXCLUSÃO ADMIN
                 st.markdown("---")
                 with st.expander("🗑️ Excluir Registro (Admin)"):
                     id_del_admin = st.text_input("Cole o 'ID Sistema' aqui para excluir:")
@@ -222,8 +221,8 @@ elif perfil == "Administrador":
                                 time.sleep(1)
                                 st.rerun()
                             except: st.error("Erro ao excluir.")
-                
-                # DOWNLOAD
+
+                # EXPORTAÇÃO EXCEL
                 st.markdown("---")
                 lst_export = []
                 for _, r in df_show.iterrows():
@@ -282,24 +281,36 @@ elif perfil == "Super Admin":
     if st.sidebar.text_input("Senha", type="password") == "Workaround&97146605":
         db = get_db()
         
-        if st.button("💣 APAGAR TUDO", type="primary"):
-            for d in db.collection('chapas_producao').stream(): d.reference.delete()
-            db.collection('controles').document('lotes_chapas').delete()
-            st.success("Limpo")
-            time.sleep(1)
-            st.rerun()
+        tab_a, tab_b, tab_c = st.tabs(["🔥 Reset Geral", "🔢 Ajuste de Lotes", "🗑️ Exclusão Manual"])
         
-        st.write("---")
-        st.write("### Ajustar Lotes")
-        doc = db.collection('controles').document('lotes_chapas').get()
-        if doc.exists:
-            data = doc.to_dict()
-            st.table(pd.DataFrame(list(data.items()), columns=['SAP', 'Último Lote']))
-            c1, c2 = st.columns(2)
-            sap = c1.number_input("SAP", step=1)
-            val = c2.number_input("Valor", step=1)
-            if c2.button("Atualizar"):
-                db.collection('controles').document('lotes_chapas').set({str(sap): val}, merge=True)
-                st.success("Feito")
+        with tab_a:
+            if st.button("💣 APAGAR TUDO (PERIGO)", type="primary"):
+                for d in db.collection('chapas_producao').stream(): d.reference.delete()
+                db.collection('controles').document('lotes_chapas').delete()
+                st.success("Limpo")
+                time.sleep(1)
                 st.rerun()
-        else: st.info("Sem dados")
+        
+        with tab_b:
+            st.write("### Ajuste de Contadores")
+            doc = db.collection('controles').document('lotes_chapas').get()
+            if doc.exists:
+                data = doc.to_dict()
+                st.table(pd.DataFrame(list(data.items()), columns=['SAP', 'Último Lote']))
+                c1, c2 = st.columns(2)
+                sap = c1.number_input("SAP", step=1)
+                val = c2.number_input("Valor", step=1)
+                if c2.button("Atualizar"):
+                    db.collection('controles').document('lotes_chapas').set({str(sap): val}, merge=True)
+                    st.success("Feito")
+                    st.rerun()
+                    
+        with tab_c:
+            st.write("### Excluir Registro")
+            id_manual = st.text_input("Cole o ID do documento:")
+            if st.button("Excluir"):
+                if id_manual:
+                    try:
+                        db.collection('chapas_producao').document(id_manual).delete()
+                        st.success("Deletado")
+                    except: st.error("Erro")
