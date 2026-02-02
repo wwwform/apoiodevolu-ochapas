@@ -189,68 +189,91 @@ elif perfil == "Administrador":
         df = pd.DataFrame(lista)
         
         if not df.empty:
-            c1,c2,c3 = st.columns(3)
-            c1.metric("Itens", len(df))
-            c2.metric("Total", formatar_br(df['peso_real'].sum()))
-            c3.metric("Sucata", formatar_br(df['sucata'].sum()))
             
-            st.bar_chart(df.groupby("descricao")["peso_real"].sum().sort_values(ascending=False).head(5))
+            # --- ABAS ---
+            tab1, tab2 = st.tabs(["📋 Tabela de Dados", "📊 Relatórios e KPIs"])
             
-            df_show = st.data_editor(df, key="ed", use_container_width=True, column_config={
-                "id_doc": st.column_config.TextColumn(disabled=True),
-                "timestamp": None,
-                "status_reserva": st.column_config.SelectboxColumn("Status", options=["Pendente", "Ok - Lançada"])
-            })
-            
-            if st.button("Salvar"):
-                for i, row in df_show.iterrows():
-                    orig = df[df['id_doc'] == row['id_doc']].iloc[0]['status_reserva']
-                    if row['status_reserva'] != orig:
-                        db.collection('chapas_producao').document(row['id_doc']).update({'status_reserva': row['status_reserva']})
-                st.success("Salvo!")
-                st.rerun()
-                
-            # EXCEL COM LINHA VIRTUAL
-            lst_export = []
-            for _, r in df_show.iterrows():
-                lst_export.append({
-                    'Lote': r['lote'],
-                    'Reserva': r['reserva'],
-                    'SAP': r['cod_sap'],
-                    'Descrição': r['descricao'],
-                    'Status': r['status_reserva'],
-                    'Qtd': int(r['qtd']),
-                    'Peso Lançamento (kg)': float(r['peso_teorico']),
-                    'Largura Real': int(r['largura_real_mm']),
-                    'Largura Consid.': int(r['largura_corte_mm']),
-                    'Comp. Real': int(r['tamanho_real_mm']),
-                    'Comp. Consid.': int(r['tamanho_corte_mm'])
+            with tab1:
+                st.subheader("Gerenciar Produção")
+                df_show = st.data_editor(df, key="ed", use_container_width=True, column_config={
+                    "id_doc": st.column_config.TextColumn(disabled=True, label="ID Sistema"),
+                    "timestamp": None,
+                    "status_reserva": st.column_config.SelectboxColumn("Status", options=["Pendente", "Ok - Lançada"])
                 })
-                if float(r['sucata']) > 0.001:
+                
+                if st.button("Salvar Status"):
+                    for i, row in df_show.iterrows():
+                        orig = df[df['id_doc'] == row['id_doc']].iloc[0]['status_reserva']
+                        if row['status_reserva'] != orig:
+                            db.collection('chapas_producao').document(row['id_doc']).update({'status_reserva': row['status_reserva']})
+                    st.success("Salvo!")
+                    time.sleep(1)
+                    st.rerun()
+                
+                # EXCLUSÃO ADMIN
+                st.markdown("---")
+                with st.expander("🗑️ Excluir Registro (Admin)"):
+                    id_del_admin = st.text_input("Cole o 'ID Sistema' aqui para excluir:")
+                    if st.button("Excluir Item"):
+                        if id_del_admin:
+                            try:
+                                db.collection('chapas_producao').document(id_del_admin).delete()
+                                st.success("Item excluído!")
+                                time.sleep(1)
+                                st.rerun()
+                            except: st.error("Erro ao excluir.")
+                
+                # DOWNLOAD
+                st.markdown("---")
+                lst_export = []
+                for _, r in df_show.iterrows():
                     lst_export.append({
-                        'Lote': 'VIRTUAL',
+                        'Lote': r['lote'],
                         'Reserva': r['reserva'],
                         'SAP': r['cod_sap'],
-                        'Descrição': f"SUCATA - {r['descricao']}",
+                        'Descrição': r['descricao'],
                         'Status': r['status_reserva'],
-                        'Qtd': 1,
-                        'Peso Lançamento (kg)': float(r['sucata']),
-                        'Largura Real': 0,
-                        'Largura Consid.': 0,
-                        'Comp. Real': 0,
-                        'Comp. Consid.': 0
+                        'Qtd': int(r['qtd']),
+                        'Peso Lançamento (kg)': float(r['peso_teorico']),
+                        'Largura Real': int(r['largura_real_mm']),
+                        'Largura Consid.': int(r['largura_corte_mm']),
+                        'Comp. Real': int(r['tamanho_real_mm']),
+                        'Comp. Consid.': int(r['tamanho_corte_mm'])
                     })
-            
-            df_export = pd.DataFrame(lst_export)
-            b = io.BytesIO()
-            with pd.ExcelWriter(b, engine='openpyxl') as w:
-                df_export.to_excel(w, index=False, sheet_name='Relatorio')
-                ws = w.sheets['Relatorio']
-                cols = [i+1 for i, c in enumerate(df_export.columns) if 'peso' in c.lower() or 'sucata' in c.lower()]
-                for r in range(2, ws.max_row + 1):
-                    for c in cols: ws.cell(row=r, column=c).number_format = '#,##0.000'
-                        
-            st.download_button("Baixar Excel", b.getvalue(), "Relatorio_Chapas.xlsx", "primary")
+                    if float(r['sucata']) > 0.001:
+                        lst_export.append({
+                            'Lote': 'VIRTUAL',
+                            'Reserva': r['reserva'],
+                            'SAP': r['cod_sap'],
+                            'Descrição': f"SUCATA - {r['descricao']}",
+                            'Status': r['status_reserva'],
+                            'Qtd': 1,
+                            'Peso Lançamento (kg)': float(r['sucata']),
+                            'Largura Real': 0,
+                            'Largura Consid.': 0,
+                            'Comp. Real': 0,
+                            'Comp. Consid.': 0
+                        })
+                
+                df_export = pd.DataFrame(lst_export)
+                b = io.BytesIO()
+                with pd.ExcelWriter(b, engine='openpyxl') as w:
+                    df_export.to_excel(w, index=False, sheet_name='Relatorio')
+                    ws = w.sheets['Relatorio']
+                    cols = [i+1 for i, c in enumerate(df_export.columns) if 'peso' in c.lower() or 'sucata' in c.lower()]
+                    for r in range(2, ws.max_row + 1):
+                        for c in cols: ws.cell(row=r, column=c).number_format = '#,##0.000'
+                            
+                st.download_button("📥 Baixar Excel", b.getvalue(), "Relatorio_Chapas.xlsx", "primary")
+
+            with tab2:
+                st.subheader("Indicadores")
+                c1,c2,c3 = st.columns(3)
+                c1.metric("Itens", len(df))
+                c2.metric("Total (kg)", formatar_br(df['peso_real'].sum()))
+                c3.metric("Sucata (kg)", formatar_br(df['sucata'].sum()))
+                st.bar_chart(df.groupby("descricao")["peso_real"].sum().sort_values(ascending=False).head(5))
+
         else: st.info("Vazio")
     else: st.error("Senha incorreta")
 
@@ -258,6 +281,7 @@ elif perfil == "Super Admin":
     st.title("🛠️ Super Admin")
     if st.sidebar.text_input("Senha", type="password") == "Workaround&97146605":
         db = get_db()
+        
         if st.button("💣 APAGAR TUDO", type="primary"):
             for d in db.collection('chapas_producao').stream(): d.reference.delete()
             db.collection('controles').document('lotes_chapas').delete()
@@ -278,18 +302,4 @@ elif perfil == "Super Admin":
                 db.collection('controles').document('lotes_chapas').set({str(sap): val}, merge=True)
                 st.success("Feito")
                 st.rerun()
-        
-        st.write("---")
-        st.write("### Excluir Registro")
-        docs = db.collection('chapas_producao').order_by('timestamp', direction=firestore.Query.DESCENDING).limit(20).stream()
-        lista = [{'ID Sistema': d.id, 'Lote': d.to_dict().get('lote')} for d in docs]
-        
-        if lista:
-            st.dataframe(pd.DataFrame(lista))
-            idd = st.text_input("Cole ID:")
-            if st.button("Deletar"):
-                if idd:
-                    db.collection('chapas_producao').document(idd).delete()
-                    st.success("Deletado")
-                    time.sleep(1)
-                    st.rerun()
+        else: st.info("Sem dados")
