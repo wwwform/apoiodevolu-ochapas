@@ -84,6 +84,7 @@ def limpar_numero_sap(valor):
     except: return 0.0
 
 def formatar_br(v):
+    # CRÍTICO: Exporta como TEXTO COM VÍRGULA
     try: return f"{float(v):,.3f}".replace(",", "X").replace(".", ",").replace("X", ".")
     except: return "0,000"
 
@@ -266,21 +267,21 @@ elif perfil == "Administrador (Escritório)":
                         st.success("Salvo!")
                         st.rerun()
                     
-                    # --- EXPORTAÇÃO EXCEL (TEXTO COM VÍRGULA) ---
+                    # --- EXPORTAÇÃO EXCEL: TEXTO COM VÍRGULA ---
                     lst = []
                     for _, r in df.iterrows():
                         lst.append({
                             'Lote':r['lote'], 'Reserva':r['reserva'], 'SAP':r['cod_sap'], 
-                            'Descrição':r['descricao'], 'Status':r['status_reserva'], 'Qtd':r['qtd'], 
-                            'Peso Lançamento (kg)': formatar_br(r['peso_teorico']), # STRING FORMATADA
-                            'Largura Real':r['largura_real_mm'], 'Largura Consid.':r['largura_corte_mm'], 
-                            'Comp. Real':r['tamanho_real_mm'], 'Comp. Consid.':r['tamanho_corte_mm']
+                            'Descrição':r['descricao'], 'Status':r['status_reserva'], 'Qtd':int(r['qtd']), 
+                            'Peso Lançamento (kg)': formatar_br(r['peso_teorico']), 
+                            'Largura Real':int(r['largura_real_mm']), 'Largura Consid.':int(r['largura_corte_mm']), 
+                            'Comp. Real':int(r['tamanho_real_mm']), 'Comp. Consid.':int(r['tamanho_corte_mm'])
                         })
                         if r['sucata'] > 0.001:
                             lst.append({
                                 'Lote':'VIRTUAL', 'Reserva':r['reserva'], 'SAP':r['cod_sap'], 
                                 'Descrição':f"SUCATA - {r['descricao']}", 'Status':r['status_reserva'], 
-                                'Qtd':1, 'Peso Lançamento (kg)': formatar_br(r['sucata']), # STRING FORMATADA
+                                'Qtd':1, 'Peso Lançamento (kg)': formatar_br(r['sucata']),
                                 'Largura Real':0, 'Largura Consid.':0, 'Comp. Real':0, 'Comp. Consid.':0
                             })
                     
@@ -312,28 +313,35 @@ elif perfil == "Super Admin":
             
         st.markdown("---")
         st.subheader("2. Ajustar Lotes")
-        ws_l = sh.worksheet("Chapas_Lotes")
-        df_l = pd.DataFrame(ws_l.get_all_records())
-        st.dataframe(df_l)
-        c1, c2, c3 = st.columns(3)
-        sap = c1.number_input("SAP:", step=1)
-        novo = c2.number_input("Novo Valor:", step=1)
-        if c3.button("Atualizar"):
-            try:
+        try:
+            ws_l = sh.worksheet("Chapas_Lotes")
+            df_l = pd.DataFrame(ws_l.get_all_records())
+            st.dataframe(df_l)
+            c1, c2, c3 = st.columns(3)
+            sap = c1.number_input("SAP:", step=1, format="%d")
+            novo = c2.number_input("Novo Valor:", step=1)
+            if c3.button("Atualizar Lote"):
                 cell = ws_l.find(str(sap))
-                ws_l.update_cell(cell.row, 2, novo)
-                st.success("Feito")
-            except: st.error("SAP não encontrado")
+                if cell:
+                    ws_l.update_cell(cell.row, 2, novo)
+                    st.success("Atualizado!")
+                    time.sleep(1)
+                    st.rerun()
+                else: st.error("SAP não encontrado")
+        except: st.error("Erro ao ler lotes")
             
         st.markdown("---")
         st.subheader("3. Excluir ID")
-        idd = st.number_input("ID para excluir:", step=1)
-        if st.button("Excluir Linha"):
+        try:
             ws_p = sh.worksheet("Chapas_Producao")
-            try:
+            idd = st.number_input("ID para excluir:", step=1, format="%d")
+            if st.button("Excluir Linha"):
                 cell = ws_p.find(str(idd))
-                ws_p.delete_rows(cell.row)
-                st.success("Apagado")
-            except: st.error("ID não existe")
-            
+                if cell:
+                    ws_p.delete_rows(cell.row)
+                    st.success("Apagado!")
+                    time.sleep(1)
+                    st.rerun()
+                else: st.error("ID não existe")
+        except: st.error("Erro ao acessar produção")
     else: st.error("Negado")
