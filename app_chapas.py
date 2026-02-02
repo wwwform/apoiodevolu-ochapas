@@ -65,10 +65,10 @@ def garantir_cabecalhos():
 
 garantir_cabecalhos()
 
-# --- FUNÇÕES CRÍTICAS ---
+# --- FUNÇÕES ---
 def limpar_numero_sap(valor):
     if pd.isna(valor): return 0.0
-    if isinstance(valor, (int, float)): return float(valor) # NÃO MEXE SE JÁ FOR NÚMERO
+    if isinstance(valor, (int, float)): return float(valor)
     
     s = str(valor).strip()
     if '.' in s and ',' in s: s = s.replace('.', '')
@@ -77,6 +77,7 @@ def limpar_numero_sap(valor):
     except: return 0.0
 
 def formatar_br(v):
+    # Apenas TELA
     try: return f"{float(v):,.3f}".replace(",", "X").replace(".", ",").replace("X", ".")
     except: return "0,000"
 
@@ -225,7 +226,7 @@ if perfil == "Operador (Chão de Fábrica)":
         st.text_input("BIPAR CÓDIGO CHAPA:", key="input_scanner", on_change=check_scan)
 
 elif perfil == "Administrador (Escritório)":
-    st.title("💻 Admin (Google Cloud)")
+    st.title("💻 Admin")
     if st.sidebar.text_input("Senha", type="password") == "Br@met4lChapas":
         sh = conectar_google()
         if sh:
@@ -258,21 +259,35 @@ elif perfil == "Administrador (Escritório)":
                         st.success("Salvo!")
                         st.rerun()
                     
+                    # --- EXPORTAÇÃO EXCEL CORRETA (FLOAT) ---
                     lst = []
                     for _, r in df.iterrows():
                         lst.append({
-                            'Lote':r['lote'], 'Reserva':r['reserva'], 'SAP':r['cod_sap'], 
-                            'Descrição':r['descricao'], 'Status':r['status_reserva'], 'Qtd':r['qtd'], 
-                            'Peso Lançamento (kg)': formatar_br(r['peso_teorico']), 
-                            'Largura Real':r['largura_real_mm'], 'Largura Consid.':r['largura_corte_mm'], 
-                            'Comp. Real':r['tamanho_real_mm'], 'Comp. Consid.':r['tamanho_corte_mm']
+                            'Lote': r['lote'],
+                            'Reserva': r['reserva'],
+                            'SAP': r['cod_sap'],
+                            'Descrição': r['descricao'],
+                            'Status': r['status_reserva'],
+                            'Qtd': int(r['qtd']),
+                            'Peso Lançamento (kg)': float(r['peso_teorico']), # FLOAT PURO
+                            'Largura Real': int(r['largura_real_mm']),
+                            'Largura Consid.': int(r['largura_corte_mm']),
+                            'Comp. Real': int(r['tamanho_real_mm']),
+                            'Comp. Consid.': int(r['tamanho_corte_mm'])
                         })
                         if r['sucata'] > 0.001:
                             lst.append({
-                                'Lote':'VIRTUAL', 'Reserva':r['reserva'], 'SAP':r['cod_sap'], 
-                                'Descrição':f"SUCATA - {r['descricao']}", 'Status':r['status_reserva'], 
-                                'Qtd':1, 'Peso Lançamento (kg)': formatar_br(r['sucata']),
-                                'Largura Real':0, 'Largura Consid.':0, 'Comp. Real':0, 'Comp. Consid.':0
+                                'Lote': 'VIRTUAL',
+                                'Reserva': r['reserva'],
+                                'SAP': r['cod_sap'],
+                                'Descrição': f"SUCATA - {r['descricao']}",
+                                'Status': r['status_reserva'],
+                                'Qtd': 1,
+                                'Peso Lançamento (kg)': float(r['sucata']), # FLOAT PURO
+                                'Largura Real': 0,
+                                'Largura Consid.': 0,
+                                'Comp. Real': 0,
+                                'Comp. Consid.': 0
                             })
                     
                     b = io.BytesIO()
